@@ -117,6 +117,7 @@ export class MicroAgentService extends Effect.Service<MicroAgentService>()('Micr
           temperature?: number;
           tools?: any[];
           enableReasoning?: boolean;
+          conversationHistory?: Array<{ role: 'user' | 'assistant'; content: string }>;
         },
       ) =>
         Effect.gen(function* () {
@@ -130,11 +131,23 @@ export class MicroAgentService extends Effect.Service<MicroAgentService>()('Micr
           // 转换工具为 OpenAI 格式
           const openaiTools = convertToolsToOpenAI(tools);
 
-          // 初始化消息
+          // 初始化消息，包含历史记录
           const messages: ChatCompletionMessageParam[] = [
             { role: 'system', content: config.systemPrompt },
-            { role: 'user', content: userMessage },
           ];
+
+          // 添加对话历史（如果有）
+          if (options?.conversationHistory && options.conversationHistory.length > 0) {
+            for (const histMsg of options.conversationHistory) {
+              messages.push({
+                role: histMsg.role,
+                content: histMsg.content,
+              });
+            }
+          }
+
+          // 添加当前用户消息
+          messages.push({ role: 'user', content: userMessage });
 
           /** Agent 核心循环生成器 */
           const agentLoopGenerator = async function* () {
@@ -147,6 +160,8 @@ export class MicroAgentService extends Effect.Service<MicroAgentService>()('Micr
               温度参数: temperature,
               可用工具: openaiTools.map((t) => t.function.name),
               工具总数: openaiTools.length,
+              历史消息数量: options?.conversationHistory?.length || 0,
+              历史记录: options?.conversationHistory?.map(h => `${h.role}: ${h.content.slice(0, 50)}...`) || [],
             });
 
             try {
@@ -401,19 +416,6 @@ export class MicroAgentService extends Effect.Service<MicroAgentService>()('Micr
                         tool_call_id: toolCall.id || `tool_${step}_${Date.now()}`,
                       });
 
-                      // 流式输出工具执行结果
-                      yield {
-                        content: '',
-                        step,
-                        toolCall: {
-                          name: toolName,
-                          parameters,
-                          result: successResult,
-                        },
-                        isDone: false,
-                        timestamp: Date.now(),
-                      } as AgentStepChunk;
-
                       // 检查是否调用了 finish 工具
                       if (
                         toolName === 'finish' &&
@@ -423,7 +425,7 @@ export class MicroAgentService extends Effect.Service<MicroAgentService>()('Micr
                         toolResult.finished
                       ) {
                         isCompleted = true;
-                        // 输出最终答案作为当前步骤的内容（不创建新步骤）
+                        // 输出最终答案作为当前步骤的内容（finish工具只输出答案，不重复工具调用信息）
                         const answer = (toolResult as any).answer;
                         yield {
                           content: answer,
@@ -443,6 +445,19 @@ export class MicroAgentService extends Effect.Service<MicroAgentService>()('Micr
                         } as AgentStepChunk;
                         break;
                       }
+
+                      // 流式输出工具执行结果（非finish工具）
+                      yield {
+                        content: '',
+                        step,
+                        toolCall: {
+                          name: toolName,
+                          parameters,
+                          result: successResult,
+                        },
+                        isDone: false,
+                        timestamp: Date.now(),
+                      } as AgentStepChunk;
                     } catch (error) {
                       const errorMessage = error instanceof Error ? error.message : String(error);
                       console.log(`❌ [AGENT DEBUG] 第${step}步 - 工具执行失败`, {

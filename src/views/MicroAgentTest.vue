@@ -116,6 +116,23 @@
       timestamp: new Date(),
     };
 
+    // 构建包含历史记录的消息数组（在添加当前用户消息之前构建，避免重复）
+    const conversationHistory: Array<{ role: 'user' | 'assistant'; content: string }> = [];
+    for (const msg of messages) {
+      if (msg.type === 'user') {
+        conversationHistory.push({
+          role: 'user',
+          content: msg.content,
+        });
+      } else if (msg.type === 'ai' && msg.content) {
+        conversationHistory.push({
+          role: 'assistant',
+          content: msg.content,
+        });
+      }
+      // Agent类型消息不包含在历史中，因为Agent会自己管理步骤
+    }
+
     messages.push(userMessage);
     currentMessage.value = '';
     error.value = '';
@@ -153,6 +170,7 @@
           const stream = yield* microAgentService.createAgentChat(userMessage.content, {
             mode: 'default',
             temperature: 0.7,
+            conversationHistory, // 传递对话历史
           });
 
           // 使用 runForEach 实现流式处理
@@ -188,9 +206,18 @@
                   currentStepData.aiOutput += chunk.content;
                 }
 
-                // 处理工具调用（排除finish工具）
-                if (chunk.toolCall && chunk.toolCall.name !== 'finish' && chunk.toolCall.name) {
-                  currentStepData.toolCall = chunk.toolCall;
+                // 处理工具调用（排除finish工具，或者只显示finish工具的结果）
+                if (chunk.toolCall && chunk.toolCall.name) {
+                  if (chunk.toolCall.name !== 'finish') {
+                    // 非finish工具，完整显示
+                    currentStepData.toolCall = chunk.toolCall;
+                  } else {
+                    // finish工具，只显示结果，隐藏参数
+                    currentStepData.toolCall = {
+                      ...chunk.toolCall,
+                      parameters: {} // 清空参数
+                    };
+                  }
                 } else if (!chunk.toolCall) {
                   // 如果没有工具调用，确保不保留旧的工具调用数据
                   delete currentStepData.toolCall;
