@@ -4,6 +4,92 @@
   min-height: 100vh;
 }
 
+/* 行内代码块样式 */
+.prose code {
+  color: #1f2937;
+  padding: 6px;
+  border-radius: 4px;
+  font-size: 0.875rem;
+  font-family: ui-monospace, SFMono-Regular, "SF Mono", Consolas, "Liberation Mono", Menlo, monospace;
+  background-color: #f3f4f6;
+  border: 1px solid #e5e7eb;
+}
+
+.prose-invert code {
+  color: #f9fafb;
+  padding: 6px;
+  border-radius: 4px;
+  font-size: 0.875rem;
+  font-family: ui-monospace, SFMono-Regular, "SF Mono", Consolas, "Liberation Mono", Menlo, monospace;
+  background-color: #374151;
+  border: 1px solid #4b5563;
+}
+
+/* 针对 vue-renderer-markdown 的内联代码样式 */
+.inline-block {
+  background-color: #f3f4f6 !important;
+  border: 1px solid #e5e7eb !important;
+  color: #1f2937 !important;
+  padding: 2px 6px !important;
+  font-size: 0.875rem !important;
+  font-family: ui-monospace, SFMono-Regular, "SF Mono", Consolas, "Liberation Mono", Menlo, monospace !important;
+  border-radius: 4px !important;
+}
+
+/* 暗色模式下的内联代码 */
+.dark .inline-block {
+  background-color: #374151 !important;
+  border: 1px solid #4b5563 !important;
+  color: #f9fafb !important;
+}
+
+/* 用户消息中的内联代码（使用 prose-invert） */
+.prose-invert .inline-block {
+  background-color: #1f2937 !important;
+  border: 1px solid #374151 !important;
+  color: #f9fafb !important;
+}
+
+/* 更通用的内联代码样式 */
+code[class*="inline-block"],
+.inline-block[class*="px-1"] {
+  background-color: #f3f4f6 !important;
+  border: 1px solid #e5e7eb !important;
+  color: #1f2937 !important;
+  padding: 2px 6px !important;
+  font-size: 0.875rem !important;
+  font-family: ui-monospace, SFMono-Regular, "SF Mono", Consolas, "Liberation Mono", Menlo, monospace !important;
+  border-radius: 4px !important;
+}
+
+/* bg-secondary 类的样式覆盖 */
+.bg-secondary {
+  background-color: #f3f4f6 !important;
+  color: #1f2937 !important;
+  border: 1px solid #e5e7eb !important;
+  padding: 2px 6px !important;
+  font-family: ui-monospace, SFMono-Regular, "SF Mono", Consolas, "Liberation Mono", Menlo, monospace !important;
+  border-radius: 4px !important;
+}
+
+.prose-invert .bg-secondary {
+  background-color: #1f2937 !important;
+  color: #f9fafb !important;
+  border: 1px solid #374151 !important;
+}
+
+/* 代码块样式增强 */
+.prose pre {
+  background-color: #f9fafb;
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+}
+
+.prose-invert pre {
+  background-color: #1f2937;
+  border: 1px solid #374151;
+}
+
 /* 自定义CSS变量 */
 :root {
   --color-primary: #007bff;

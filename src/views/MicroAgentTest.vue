@@ -33,6 +33,14 @@
   const apiKey = ref('');
   const model = ref('gpt-3.5-turbo');
   const baseUrl = ref('https://api.openai.com/v1');
+  const enableSystemPrompt = ref(false);
+  const systemPromptContent = ref(`你的回答支持丰富的 Markdown 渲染：
+- 代码块：\`\`\`language 语法高亮，支持 Monaco 编辑器
+- 数学公式：$行内公式$ 和 $$块级公式$$ (KaTeX)
+- 图表：\`\`\`mermaid 流程图、时序图等
+- 完整 Markdown：表格、列表、任务列表、引用等
+
+请充分利用这些格式化功能让内容更清晰。`);
 
   /** 返回主页 */
   const goHome = () => {
@@ -48,6 +56,7 @@
       envConfig.baseUrl ||
       localStorage.getItem('micro-agent-base-url') ||
       'https://api.openai.com/v1';
+    enableSystemPrompt.value = localStorage.getItem('micro-agent-enable-system-prompt') === 'true';
   };
 
   /** 保存配置 */
@@ -55,6 +64,7 @@
     localStorage.setItem('micro-agent-api-key', apiKey.value);
     localStorage.setItem('micro-agent-model', model.value);
     localStorage.setItem('micro-agent-base-url', baseUrl.value);
+    localStorage.setItem('micro-agent-enable-system-prompt', enableSystemPrompt.value.toString());
     showSettings.value = false;
   };
 
@@ -103,7 +113,18 @@
     scrollToBottom();
 
     try {
-      const chatMessages: ChatMessage[] = messages.value.slice(0, -1); // 排除刚创建的空助手消息
+      let chatMessages: ChatMessage[] = messages.value.slice(0, -1); // 排除刚创建的空助手消息
+
+      // 如果启用了系统提示词，注入系统消息
+      if (enableSystemPrompt.value) {
+        const systemMessage: ChatMessage = {
+          role: 'system',
+          content: systemPromptContent.value,
+          timestamp: new Date(),
+        };
+        // 将系统消息插入到对话开头
+        chatMessages = [systemMessage, ...chatMessages];
+      }
 
       const chatProgram = Effect.gen(function* () {
         const microAgentService = yield* MicroAgentService;
@@ -321,6 +342,19 @@
               v-model="baseUrl"
               class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
               placeholder="https://api.openai.com/v1" />
+          </div>
+
+          <div>
+            <label class="flex items-center gap-2">
+              <input
+                type="checkbox"
+                v-model="enableSystemPrompt"
+                class="rounded border-gray-300 text-blue-600 focus:ring-blue-500" />
+              <span class="text-sm font-medium text-gray-700">启用渲染功能提示</span>
+            </label>
+            <p class="text-xs text-gray-500 mt-1">
+              启用后会告诉 AI 当前环境支持丰富的 Markdown 渲染功能
+            </p>
           </div>
         </div>
 
