@@ -17,6 +17,8 @@ export class OpenAIClientService extends Effect.Service<OpenAIClientService>()(
       const openAI = new OpenAI({
         apiKey: config.apiKey,
         baseURL: config.baseUrl,
+        // TODO 仅用于开发环境！生产环境应该使用后端代理
+        dangerouslyAllowBrowser: true,
       });
 
       return {
