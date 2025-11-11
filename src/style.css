@@ -1,0 +1,34 @@
+@import "tailwindcss";
+
+#app {
+  min-height: 100vh;
+}
+
+/* 自定义CSS变量 */
+:root {
+  --color-primary: #007bff;
+  --color-primary-hover: #0056b3;
+}
+
+/* 自定义工具类 */
+.bg-gradient-primary {
+  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+}
+
+/* 滚动条样式 */
+::-webkit-scrollbar {
+  width: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background: #f1f1f1;
+}
+
+::-webkit-scrollbar-thumb {
+  background: #c1c1c1;
+  border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: #a8a8a8;
+}
