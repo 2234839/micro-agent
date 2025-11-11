@@ -35,6 +35,7 @@ export class StreamingChatService extends Effect.Service<StreamingChatService>()
             temperature?: number;
             maxTokens?: number;
             reasoningEffort?: 'minimal' | 'low' | 'medium' | 'high';
+            enableReasoning?: boolean;
           },
         ) =>
           Effect.gen(function* () {

@@ -1,7 +1,7 @@
 import { Effect, Layer, Stream } from 'effect';
 import { EnvConfigService } from './agent/config/env-config';
 import { OpenAIConfigService } from './agent/config/openai-config';
-import { MicroAgentService, type ChatMessage } from './agent/micro-agent';
+import { MicroAgentService, type ApiChatMessage } from './agent/micro-agent';
 import { OpenAIClientService } from './agent/services/openai-client';
 import { StreamingChatService } from './agent/services/streaming-chat';
 
@@ -11,7 +11,7 @@ import { StreamingChatService } from './agent/services/streaming-chat';
 const microAgentStreamingExample = Effect.gen(function* () {
   const microAgentService = yield* MicroAgentService;
 
-  const messages: ChatMessage[] = [
+  const messages: ApiChatMessage[] = [
     {
       role: 'system',
       content: '你是一个有帮助的助手，请用中文简洁地回答问题。',

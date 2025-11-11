@@ -1,8 +1,8 @@
 <script setup lang="ts">
-  import { ref, onMounted, nextTick } from 'vue';
+  import { ref, onMounted, nextTick, reactive } from 'vue';
   import { useRouter } from 'vue-router';
   import BaseButton from '../components/BaseButton.vue';
-  import { MicroAgentService, type ChatMessage } from '../agent/micro-agent';
+  import { MicroAgentService, type AgentStepChunk } from '../agent/micro-agent';
   import type { StreamChunk } from '../agent/services/streaming-chat';
   import { Effect, Stream, Layer } from 'effect';
   import { OpenAIConfigService } from '../agent/config/openai-config';
@@ -19,11 +19,30 @@
   });
   const router = useRouter();
 
+  /** 工具调用展开状态管理 */
+  const toolCallExpanded = ref<Record<string, boolean>>({});
+
   /** 对话消息列表 */
-  const messages = ref<Array<ChatMessage>>([]);
+  const messages = reactive<
+    Array<{
+      type: 'user' | 'ai' | 'agent';
+      content: string;
+      timestamp: Date;
+      agentData?: {
+        steps: Array<{
+          aiOutput: string;
+          toolCall?: any;
+          error?: string;
+        }>;
+      };
+    }>
+  >([]);
   const currentMessage = ref('');
   const isLoading = ref(false);
   const error = ref('');
+
+  /** Agent 模式状态 */
+  const isAgentMode = ref(false);
 
   /** 滚动容器引用 */
   const chatContainer = ref<HTMLElement>();
@@ -91,93 +110,200 @@
       return;
     }
 
-    const userMessage: ChatMessage = {
-      role: 'user',
+    const userMessage = {
+      type: 'user' as const,
       content: currentMessage.value.trim(),
       timestamp: new Date(),
     };
 
-    messages.value.push(userMessage);
+    messages.push(userMessage);
     currentMessage.value = '';
     error.value = '';
     isLoading.value = true;
 
-    // 创建临时助手消息用于流式显示
-    const assistantMessage: ChatMessage = {
-      role: 'assistant',
-      content: '',
-      timestamp: new Date(),
-    };
-    messages.value.push(assistantMessage);
-
     scrollToBottom();
 
     try {
-      let chatMessages: ChatMessage[] = messages.value.slice(0, -1); // 排除刚创建的空助手消息
-
-      // 如果启用了系统提示词，注入系统消息
-      if (enableSystemPrompt.value) {
-        const systemMessage: ChatMessage = {
-          role: 'system',
-          content: systemPromptContent.value,
-          timestamp: new Date(),
-        };
-        // 将系统消息插入到对话开头
-        chatMessages = [systemMessage, ...chatMessages];
-      }
-
-      const chatProgram = Effect.gen(function* () {
-        const microAgentService = yield* MicroAgentService;
-        const stream = yield* microAgentService.createStreamingChat(chatMessages, {
-          temperature: 0.7,
-        });
-
-        let fullResponse = '';
-
-        yield* Stream.runForEach(stream, (chunk: StreamChunk) => {
-          if (chunk.error) {
-            throw new Error(chunk.error);
-          }
-
-          // 直接处理每个 chunk，立即显示
-          if (chunk.content) {
-            const lastMessage = messages.value[messages.value.length - 1];
-            if (lastMessage && lastMessage.role === 'assistant') {
-              // 累积并立即更新显示
-              const updatedContent = lastMessage.content + chunk.content;
-              messages.value[messages.value.length - 1] = {
-                ...lastMessage,
-                content: updatedContent,
-              };
-              // 强制触发 Vue 的响应式更新
-              messages.value = [...messages.value];
-              scrollToBottom();
-            }
-          }
-
-          return Effect.void;
-        });
-
-        return fullResponse;
-      });
-
       const chatLayer = MicroAgentService.Default.pipe(
         Layer.provide(OpenAIConfigService.Default),
         Layer.provide(EnvConfigService.Default),
       );
 
-      await Effect.runPromise(chatProgram.pipe(Effect.provide(chatLayer)));
+      if (isAgentMode.value) {
+        // Agent 模式 - 创建响应式的步骤列表
+        const agentMessage = {
+          type: 'agent' as const,
+          content: '',
+          timestamp: new Date(),
+          agentData: reactive({
+            steps: [] as Array<{
+              aiOutput: string;
+              toolCall?: any;
+              error?: string;
+            }>,
+          }),
+        };
+
+        messages.push(agentMessage);
+
+        let isFirstChunk = true; // 标记是否为第一个 chunk
+
+        const chatProgram = Effect.gen(function* () {
+          const microAgentService = yield* MicroAgentService;
+          const stream = yield* microAgentService.createAgentChat(userMessage.content, {
+            mode: 'default',
+            temperature: 0.7,
+          });
+
+          // 使用 runForEach 实现流式处理
+          yield* Stream.runForEach(stream, (chunk: AgentStepChunk) => {
+            return Effect.sync(() => {
+              // 第一个 chunk 到达时停止 loading
+              if (isFirstChunk) {
+                isLoading.value = false;
+                isFirstChunk = false;
+              }
+
+              if (chunk.error && !chunk.isDone) {
+                // 非致命错误，继续执行
+                console.error('Agent step error:', chunk.error);
+              }
+
+              // 确保步骤数组有足够的长度
+              while (agentMessage.agentData.steps.length < chunk.step) {
+                agentMessage.agentData.steps.push({
+                  aiOutput: '',
+                  toolCall: undefined,
+                  error: undefined,
+                });
+              }
+
+              // 获取当前步骤数据（使用 step-1 作为索引，因为 step 从 1 开始）
+              const currentStepIndex = chunk.step - 1;
+              const currentStepData = agentMessage.agentData.steps[currentStepIndex];
+
+              if (currentStepData) {
+                // 处理AI输出内容（直接累积，不做重复检查）
+                if (chunk.content && chunk.content.trim()) {
+                  currentStepData.aiOutput += chunk.content;
+                }
+
+                // 处理工具调用（排除finish工具）
+                if (chunk.toolCall && chunk.toolCall.name !== 'finish' && chunk.toolCall.name) {
+                  currentStepData.toolCall = chunk.toolCall;
+                } else if (!chunk.toolCall) {
+                  // 如果没有工具调用，确保不保留旧的工具调用数据
+                  delete currentStepData.toolCall;
+                }
+
+                // 处理错误
+                if (chunk.error) {
+                  currentStepData.error = chunk.error;
+                } else if (!chunk.error) {
+                  // 如果没有错误，确保不保留旧的错误数据
+                  delete currentStepData.error;
+                }
+              }
+
+              // 自动滚动到底部
+              scrollToBottom();
+            });
+          });
+
+          return ''; // Agent的答案会在步骤中渲染
+        });
+
+        // 立即开始流式处理，不等待完成
+        Effect.runPromise(chatProgram.pipe(Effect.provide(chatLayer)))
+          .catch((err) => {
+            console.error('Agent execution error:', err);
+            error.value = err instanceof Error ? err.message : '发送失败';
+            isLoading.value = false; // 确保出错时也停止 loading
+          })
+          .finally(() => {
+            isLoading.value = false; // 确保最终停止 loading
+          });
+      } else {
+        // 普通聊天模式
+        const aiMessage = {
+          type: 'ai' as const,
+          content: '',
+          timestamp: new Date(),
+        };
+
+        messages.push(aiMessage);
+
+        // 构建API消息历史
+        const apiMessages: Array<{ role: 'system' | 'user' | 'assistant'; content: string }> = [];
+
+        // 添加系统提示（如果启用）
+        if (enableSystemPrompt.value) {
+          apiMessages.push({
+            role: 'system',
+            content: systemPromptContent.value,
+          });
+        }
+
+        // 添加历史对话（只添加用户和AI消息）
+        for (const msg of messages) {
+          if (msg.type === 'user') {
+            apiMessages.push({
+              role: 'user',
+              content: msg.content,
+            });
+          } else if (msg.type === 'ai' && msg.content) {
+            apiMessages.push({
+              role: 'assistant',
+              content: msg.content,
+            });
+          }
+        }
+
+        const chatProgram = Effect.gen(function* () {
+          const microAgentService = yield* MicroAgentService;
+          const stream = yield* microAgentService.createStreamingChat(apiMessages, {
+            temperature: 0.7,
+          });
+
+          yield* Stream.runForEach(stream, (chunk: StreamChunk) => {
+            if (chunk.error) {
+              throw new Error(chunk.error);
+            }
+
+            // 直接处理每个 chunk，立即显示
+            if (chunk.content) {
+              const lastMessage = messages[messages.length - 1];
+              if (lastMessage && lastMessage.type === 'ai') {
+                // 累积并立即更新显示
+                lastMessage.content += chunk.content;
+                scrollToBottom();
+              }
+            }
+
+            return Effect.void;
+          });
+        });
+
+        await Effect.runPromise(chatProgram.pipe(Effect.provide(chatLayer)));
+      }
     } catch (err) {
       error.value = err instanceof Error ? err.message : '发送失败';
-      // 移除失败的助手消息
-      const index = messages.value.indexOf(assistantMessage);
-      if (index > -1) {
-        messages.value.splice(index, 1);
-      }
     } finally {
       isLoading.value = false;
       scrollToBottom();
     }
+  };
+
+  /** 切换工具调用展开状态 */
+  const toggleToolCall = (stepIndex: number) => {
+    const key = `step-${stepIndex}`;
+    toolCallExpanded.value[key] = !toolCallExpanded.value[key];
+  };
+
+  /** 检查工具调用是否展开 */
+  const isToolCallExpanded = (stepIndex: number) => {
+    const key = `step-${stepIndex}`;
+    return toolCallExpanded.value[key] || false;
   };
 
   /** 处理回车发送 */
@@ -190,7 +316,7 @@
 
   /** 清空对话 */
   const clearChat = () => {
-    messages.value = [];
+    messages.length = 0;
     error.value = '';
   };
 
@@ -223,14 +349,41 @@
         <h2 class="text-2xl font-semibold text-gray-800 mb-2">欢迎使用 Micro Agent</h2>
         <p class="text-gray-600 mb-6">有什么我可以帮助您的吗？</p>
 
+        <!-- 模式切换 -->
+        <div class="mb-8 max-w-xs mx-auto">
+          <label class="block text-sm font-medium text-gray-700 mb-2">选择模式</label>
+          <div class="grid grid-cols-2 gap-2">
+            <button
+              @click="isAgentMode = false"
+              :class="[
+                'px-4 py-2 rounded-lg text-sm font-medium transition-colors',
+                !isAgentMode
+                  ? 'bg-blue-600 text-white'
+                  : 'bg-gray-100 text-gray-700 hover:bg-gray-200',
+              ]">
+              普通聊天
+            </button>
+            <button
+              @click="isAgentMode = true"
+              :class="[
+                'px-4 py-2 rounded-lg text-sm font-medium transition-colors',
+                isAgentMode
+                  ? 'bg-blue-600 text-white'
+                  : 'bg-gray-100 text-gray-700 hover:bg-gray-200',
+              ]">
+              智能 Agent
+            </button>
+          </div>
+        </div>
+
         <!-- 快捷提示 -->
         <div class="grid grid-cols-1 md:grid-cols-2 gap-3 max-w-2xl mx-auto">
           <button
             v-for="prompt in [
-              '写一个Python函数来计算斐波那契数列',
-              '解释什么是机器学习',
-              '帮我写一封邮件',
-              '推荐一些学习编程的资源',
+              isAgentMode ? '计算 1+1*2-3/4 的结果' : '写一个Python函数来计算斐波那契数列',
+              isAgentMode ? '获取当前时间并转换为时间戳' : '解释什么是机器学习',
+              isAgentMode ? '帮我格式化这个JSON数据' : '帮我写一封邮件',
+              isAgentMode ? '执行 JavaScript 代码测试' : '推荐一些学习编程的资源',
             ]"
             :key="prompt"
             @click="currentMessage = prompt"
@@ -249,41 +402,155 @@
 
       <!-- 消息列表 -->
       <div class="max-w-3xl mx-auto space-y-6">
-        <div
-          v-for="(message, index) in messages"
-          :key="index"
-          class="flex"
-          :class="message.role === 'user' ? 'justify-end' : 'justify-start'">
-          <div
-            class="max-w-[80%] px-4 py-3 rounded-lg"
-            :class="
-              message.role === 'user'
-                ? 'bg-blue-600 text-white'
-                : 'bg-gray-100 text-gray-800 border border-gray-200'
-            ">
-            <div class="flex items-center gap-2 mb-1">
-              <div class="font-medium text-sm">
-                {{ message.role === 'user' ? '👤 您' : '🤖 Micro Agent' }}
+        <template v-for="(message, index) in messages" :key="index">
+          <!-- 用户消息 -->
+          <div v-if="message.type === 'user'" class="flex justify-end">
+            <div class="max-w-[80%] px-4 py-3 rounded-lg bg-blue-600 text-white">
+              <div class="flex items-center gap-2 mb-1">
+                <div class="font-medium text-sm">👤 您</div>
+                <div class="text-xs opacity-70">{{ message.timestamp.toLocaleTimeString() }}</div>
               </div>
-              <div class="text-xs opacity-70">
-                {{ message.timestamp.toLocaleTimeString() }}
+              <div class="prose prose-sm max-w-none prose-invert">
+                <MarkdownRender
+                  v-if="message.content"
+                  :content="message.content"
+                  :code-block-stream="true"
+                  :viewport-priority="true"
+                  custom-id="user-chat" />
+                <div v-else class="text-gray-300 italic">无内容</div>
               </div>
-            </div>
-
-            <!-- 消息内容 -->
-            <div
-              class="prose prose-sm max-w-none"
-              :class="message.role === 'user' ? 'prose-invert' : ''">
-              <MarkdownRender
-                v-if="message.content"
-                :content="message.content"
-                :code-block-stream="true"
-                :viewport-priority="true"
-                custom-id="micro-agent-chat" />
-              <div v-else class="text-gray-500 italic">无内容</div>
             </div>
           </div>
-        </div>
+
+          <!-- AI 消息 -->
+          <div v-else-if="message.type === 'ai'" class="flex justify-start">
+            <div
+              class="w-full max-w-none px-4 py-3 rounded-lg bg-gray-100 text-gray-800 border border-gray-200">
+              <div class="flex items-center gap-2 mb-1">
+                <div class="font-medium text-sm">🤖 Micro Agent</div>
+                <div class="text-xs opacity-70">{{ message.timestamp.toLocaleTimeString() }}</div>
+              </div>
+
+              <!-- AI 消息直接渲染 Markdown -->
+              <div class="prose prose-sm max-w-none">
+                <MarkdownRender
+                  v-if="message.content"
+                  :content="message.content"
+                  :code-block-stream="true"
+                  :viewport-priority="true"
+                  custom-id="ai-chat" />
+                <div v-else class="text-gray-400 italic">正在思考...</div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Agent 消息 -->
+          <div v-else-if="message.type === 'agent'" class="flex justify-start">
+            <div
+              class="w-full max-w-none px-4 py-3 rounded-lg bg-gray-100 text-gray-800 border border-gray-200">
+              <div class="flex items-center gap-2 mb-1">
+                <div class="font-medium text-sm">🤖 Smart Agent</div>
+                <div class="text-xs opacity-70">{{ message.timestamp.toLocaleTimeString() }}</div>
+              </div>
+
+              <!-- Agent 消息渲染步骤列表 -->
+              <div class="agent-message">
+                <!-- 渲染所有步骤 -->
+                <template v-if="message.agentData">
+                  <template v-for="(step, stepIndex) in message.agentData.steps" :key="stepIndex">
+                    <!-- AI 输出内容（流式 Markdown 渲染） -->
+                    <div v-if="step.aiOutput" class="ai-output-block">
+                      <MarkdownRender
+                        :content="step.aiOutput"
+                        :code-block-stream="true"
+                        :viewport-priority="true"
+                        :custom-id="`agent-step-${stepIndex}-ai-output`" />
+                    </div>
+
+                    <!-- 工具调用（特殊渲染） -->
+                    <div v-if="step.toolCall" >
+                      <div
+                        class="flex items-center gap-2 cursor-pointer hover:bg-gray-50 p-2 rounded transition-colors"
+                        @click="toggleToolCall(stepIndex)">
+                        <span class="text-sm font-medium text-gray-700">🛠️ 调用工具:</span>
+                        <code class="px-2 py-1 bg-blue-100 text-blue-800 rounded text-sm font-mono">
+                          {{ step.toolCall.name }}
+                        </code>
+
+                        <!-- 展开/折叠图标 -->
+                        <div class="ml-auto flex items-center gap-1">
+                          <div v-if="step.toolCall.result" class="flex items-center gap-1">
+                            <div
+                              class="w-2 h-2 rounded-full"
+                              :class="{
+                                'bg-green-500': step.toolCall.result.success !== false,
+                                'bg-red-500': step.toolCall.result.success === false,
+                              }"></div>
+                            <span class="text-xs text-gray-500">
+                              {{ step.toolCall.result.success !== false ? '成功' : '失败' }}
+                            </span>
+                          </div>
+                          <svg
+                            class="w-4 h-4 text-gray-400 transition-transform"
+                            :class="{ 'rotate-90': isToolCallExpanded(stepIndex) }"
+                            fill="none"
+                            stroke="currentColor"
+                            viewBox="0 0 24 24">
+                            <path
+                              stroke-linecap="round"
+                              stroke-linejoin="round"
+                              stroke-width="2"
+                              d="M9 5l7 7-7 7" />
+                          </svg>
+                        </div>
+                      </div>
+
+                      <!-- 工具详情（折叠内容） -->
+                      <div
+                        v-show="isToolCallExpanded(stepIndex)"
+                        class="mt-2 space-y-2 pl-2 border-l-2 border-gray-200">
+                        <!-- 工具参数 -->
+                        <div
+                          v-if="Object.keys(step.toolCall.parameters).length > 0"
+                          class="space-y-1">
+                          <div class="text-sm font-medium text-gray-600">参数:</div>
+                          <div class="bg-gray-50 rounded p-2 max-h-32 overflow-y-auto">
+                            <pre class="text-xs text-gray-700 whitespace-pre-wrap">{{
+                              JSON.stringify(step.toolCall.parameters, null, 2)
+                            }}</pre>
+                          </div>
+                        </div>
+
+                        <!-- 工具结果 -->
+                        <div v-if="step.toolCall.result" class="space-y-1">
+                          <div class="text-sm font-medium text-gray-600">执行结果:</div>
+                          <div
+                            class="rounded p-2 max-h-48 overflow-y-auto text-xs"
+                            :class="{
+                              'bg-green-50 text-green-800': step.toolCall.result.success !== false,
+                              'bg-red-50 text-red-800': step.toolCall.result.success === false,
+                            }">
+                            <pre class="whitespace-pre-wrap">{{
+                              JSON.stringify(step.toolCall.result, null, 2)
+                            }}</pre>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+
+                    <!-- 错误信息 -->
+                    <div v-if="step.error" class="error-block">
+                      <div class="bg-red-50 border border-red-200 rounded p-3 text-sm text-red-700">
+                        <div class="font-medium text-red-800 mb-1">❌ 错误:</div>
+                        <div>{{ step.error }}</div>
+                      </div>
+                    </div>
+                  </template>
+                </template>
+              </div>
+            </div>
+          </div>
+        </template>
       </div>
     </div>
 
@@ -367,5 +634,4 @@
   </div>
 </template>
 
-<style scoped>
-</style>
+<style scoped></style>

@@ -32,6 +32,9 @@ export class OpenAIClientService extends Effect.Service<OpenAIClientService>()(
             temperature?: number;
             maxTokens?: number;
             reasoningEffort?: 'minimal' | 'low' | 'medium' | 'high';
+            enableReasoning?: boolean;
+            tools?: Array<{ type: 'function'; function: { name: string; description: string; parameters: Record<string, unknown> } }>;
+            toolChoice?: 'auto' | 'none';
           },
         ) =>
           Effect.tryPromise({
@@ -44,9 +47,15 @@ export class OpenAIClientService extends Effect.Service<OpenAIClientService>()(
                 stream: true,
                 // @ts-ignore glm 模型的专属配置参数
                 thinking: {
-                  type: 'disabled' as 'disabled' | 'enbaled',
+                  type: options?.enableReasoning ? ('enabled' as const) : ('disabled' as const),
                 },
               };
+
+              // 添加工具支持
+              if (options?.tools && options.tools.length > 0) {
+                params.tools = options.tools;
+                params.tool_choice = options?.toolChoice || 'auto';
+              }
 
               // 某些 API（如 OpenAI 的 reasoning 模型）支持 reasoning_effort 参数
               const modelToCheck = options?.model || config.model;
