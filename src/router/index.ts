@@ -2,6 +2,8 @@ import { createRouter, createWebHistory } from 'vue-router'
 import Home from '../views/Home.vue'
 import ComponentDemo from '../views/ComponentDemo.vue'
 import MicroAgentTest from '../views/MicroAgentTest.vue'
+import TokenSpeedTest from '../views/TokenSpeedTest.vue'
+import LayoutView from '../views/LayoutView.vue'
 
 /**
  * 路由配置
@@ -24,12 +26,32 @@ const routes = [
     }
   },
   {
-    path: '/test',
-    name: 'test',
-    component: MicroAgentTest,
-    meta: {
-      title: 'Micro Agent 测试'
-    }
+    path: '/',
+    component: LayoutView,
+    children: [
+      {
+        path: 'test',
+        name: 'test',
+        component: MicroAgentTest,
+        meta: {
+          title: 'Micro Agent Chat',
+          showBackButton: true,
+          showClearButton: true,
+          showSettingsButton: true
+        }
+      },
+      {
+        path: 'token-speed-test',
+        name: 'token-speed-test',
+        component: TokenSpeedTest,
+        meta: {
+          title: 'AI Token 速度测试',
+          showBackButton: true,
+          showClearButton: true,
+          showSettingsButton: true
+        }
+      }
+    ]
   }
 ]
 

@@ -11,7 +11,7 @@
           <h1 class="text-3xl font-bold text-gray-800 mb-4">欢迎使用 Micro Agent</h1>
           <p class="text-gray-600 mb-6">一个基于 Vue 3 的轻量级组件库</p>
 
-          <div class="flex justify-center gap-4 mb-8">
+          <div class="flex flex-col sm:flex-row justify-center gap-4 mb-8">
             <router-link
               to="/demo"
               class="inline-flex items-center gap-2 text-blue-600 no-underline py-2 px-4 border border-blue-600 rounded-lg transition-all duration-300 bg-blue-600/10 hover:bg-blue-600 hover:text-white hover:-translate-y-0.5 hover:shadow-lg">
@@ -21,6 +21,11 @@
               to="/test"
               class="inline-flex items-center gap-2 text-green-600 no-underline py-2 px-4 border border-green-600 rounded-lg transition-all duration-300 bg-green-600/10 hover:bg-green-600 hover:text-white hover:-translate-y-0.5 hover:shadow-lg">
               🧪 测试 Micro Agent
+            </router-link>
+            <router-link
+              to="/token-speed-test"
+              class="inline-flex items-center gap-2 text-purple-600 no-underline py-2 px-4 border border-purple-600 rounded-lg transition-all duration-300 bg-purple-600/10 hover:bg-purple-600 hover:text-white hover:-translate-y-0.5 hover:shadow-lg">
+              ⚡ Token 速度测试
             </router-link>
           </div>
         </div>
