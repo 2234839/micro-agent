@@ -2,32 +2,7 @@
   /** 测试进度卡片组件 - 带背景速度曲线图 */
   import { computed, useTemplateRef } from 'vue';
   import SpeedChart from './SpeedChart.vue';
-
-  interface ProgressData {
-    testId: string;
-    testCaseId: string;
-    testCaseName: string;
-    status: 'running' | 'completed' | 'error';
-    tokens: number; // 估算的 token 数
-    actualTokens?: {
-      promptTokens?: number;
-      completionTokens?: number;
-      totalTokens?: number;
-    }; // API返回的实际token数量
-    totalSpeed: number;
-    currentSpeed: number;
-    outputSpeed: number;
-    firstTokenTime?: number;
-    startTime: number;
-    duration: number; // 总耗时（毫秒），与BatchResults保持一致
-    // 添加历史数据
-    historyData: Array<{
-      time: number;
-      totalSpeed: number;
-      currentSpeed: number;
-      outputSpeed: number;
-    }>;
-  }
+  import type { ProgressData } from '../../../types/test-progress';
 
   interface Props {
     progress: ProgressData;
@@ -58,8 +33,8 @@
   // 格式化时间
   const formatTime = (ms: number): string => {
     if (ms < 1000) return `${ms}ms`;
-    if (ms < 60000) return `${(ms / 1000).toFixed(1)}s`;
-    return `${(ms / 60000).toFixed(1)}m`;
+    if (ms < 60000) return `${(ms / 1000).toFixed(2)}s`;
+    return `${(ms / 60000).toFixed(3)}m`;
   };
 
   // 格式化速度

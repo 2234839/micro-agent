@@ -14,6 +14,7 @@
     getAllTags,
     type TestMode
   } from '../../config/test-cases';
+  import type { ProgressData, RealtimeTestData, HistoryChunk, HistoryDataPoint } from '../../types/test-progress';
 
   // 导入子组件
   import ModeSelector from './components/ModeSelector.vue';
@@ -74,12 +75,7 @@
   const multiRoundProgress = ref({ currentRound: 1, totalRounds: 1, currentTest: 0, totalTests: 0 });
   const multiRoundResults = ref<Array<{ round: number; results: TokenTestResult[] }>>([]);
   const isMultiRoundRunning = ref(false);
-  const accumulatedHistoryData = ref<Map<string, Array<{
-    time: number;
-    totalSpeed: number;
-    currentSpeed: number;
-    outputSpeed: number;
-  }>>>(new Map());
+  const accumulatedHistoryData = ref<Map<string, HistoryDataPoint[]>>(new Map());
 
   // 计算属性
   const allCategories = computed(() => getAllCategories());
@@ -109,55 +105,81 @@
       : { current: 0, total: 0, percentage: 0 }
   );
 
-  /** 实时进度数据 - 转换为数组方便渲染，添加性能优化 */
+  /** 统一的数据转换函数 - 单一数据源处理逻辑 */
+  const transformTestData = (rawData: TokenTestResult | RealtimeTestData & { testId?: string }): ProgressData => {
+    // 获取累计的历史数据
+    const accumulatedHistoryPoints = accumulatedHistoryData.value.get(rawData.testCaseId) || [];
+
+    // 处理不同数据源的历史数据，统一转换为 HistoryDataPoint 格式
+    let combinedHistoryData: HistoryDataPoint[] = [];
+
+    if ('chunks' in rawData && rawData.chunks) {
+      // TokenTestResult 的 chunks 数据转换为 HistoryDataPoint
+      const chunksHistoryData: HistoryDataPoint[] = rawData.chunks.map(chunk => ({
+        time: chunk.timestamp,
+        totalSpeed: rawData.tokensPerSecond || 0,
+        currentSpeed: rawData.tokensPerSecond || 0,
+        outputSpeed: rawData.outputSpeed || 0
+      }));
+
+      combinedHistoryData = enableMultiRound.value ?
+        [...accumulatedHistoryPoints, ...chunksHistoryData] :
+        chunksHistoryData;
+    } else if ('historyData' in rawData && rawData.historyData) {
+      // RealtimeTestData 的 historyData 数据已经是 HistoryDataPoint 格式
+      combinedHistoryData = enableMultiRound.value ?
+        [...accumulatedHistoryPoints, ...rawData.historyData] :
+        rawData.historyData;
+    }
+
+    // 处理不同数据源的速度字段
+    const isTestResult = 'tokensPerSecond' in rawData;
+    const isRealtimeData = 'speed' in rawData;
+
+    const totalSpeed = isTestResult ? rawData.tokensPerSecond : (isRealtimeData ? rawData.speed : 0);
+    const currentSpeed = isTestResult ? rawData.tokensPerSecond : (isRealtimeData ? rawData.currentSpeed : 0);
+    const startTime = isTestResult ? rawData.timestamp.getTime() : rawData.startTime;
+    const testId = isTestResult ? rawData.id : (rawData.testId || '');
+
+    // 处理 duration 字段
+    const duration = isTestResult ? rawData.duration : (isRealtimeData ? rawData.actualDuration : 0);
+    const outputSpeed = (isTestResult ? rawData.outputSpeed : (isRealtimeData ? rawData.outputSpeed : 0)) || 0;
+
+    return {
+      testId: testId,
+      testCaseId: rawData.testCaseId,
+      testCaseName: rawData.testCaseName,
+      status: rawData.status,
+      tokens: rawData.tokens,
+      actualTokens: rawData.actualTokens,
+      totalSpeed, // 统一的总速度字段
+      currentSpeed, // 统一当前速度字段
+      outputSpeed, // 统一输出速度字段
+      firstTokenTime: rawData.firstTokenTime,
+      startTime: startTime || 0,
+      duration, // 统一持续时间字段
+      historyData: combinedHistoryData // 已经是 HistoryDataPoint 格式
+    };
+  };
+
+  /** 实时进度数据 - 使用统一的数据转换函数 */
   const realtimeTestProgress = computed(() => {
     // 如果没有活跃测试，直接返回空数组
     if (activeTests.value.size === 0) return [];
 
-    const now = Date.now();
     const result = [];
+    const now = Date.now();
 
-    // 使用 for 循环而不是 map 来提高性能
+    // 使用统一的数据转换函数
     for (const [testId, data] of activeTests.value.entries()) {
-      // 确保实际持续时间始终有值
-      if (!data.actualDuration) {
-        data.actualDuration = now - data.startTime;
-      }
-
-      // 使用 completionTokens 计算速度，如果没有则回退到计算的 tokens
-      const tokensForSpeed = data.actualTokens?.completionTokens || data.tokens || 0;
-      const calculatedTotalSpeed = data.actualDuration > 0 ? (tokensForSpeed * 1000) / data.actualDuration : 0;
-
-      // 计算纯输出速度（不包含首次响应时间）
-      const outputElapsedTime = data.firstTokenTime ? (data.actualDuration - data.firstTokenTime) : 0;
-      const outputSpeed = outputElapsedTime > 0 && tokensForSpeed > 0 ? (tokensForSpeed * 1000) / outputElapsedTime : 0;
-
-      // 对于已完成测试，使用重新计算的精确速度；对于运行中的测试，使用实时更新的速度
-      const finalTotalSpeed = data.status === 'completed' ? calculatedTotalSpeed : (data.speed || calculatedTotalSpeed);
-      const finalCurrentSpeed = data.status === 'completed' ? finalTotalSpeed : (data.currentSpeed || finalTotalSpeed);
-
-      // 获取累计的历史数据
-      const accumulatedData = accumulatedHistoryData.value.get(data.testCaseId) || [];
-      const combinedHistoryData = enableMultiRound.value ?
-        [...accumulatedData, ...(data.historyData || [])] :
-        (data.historyData || []);
-
-      result.push({
+      // 确保运行中的测试有最新的持续时间
+      const rawData: RealtimeTestData & { testId: string } = {
+        ...data,
         testId,
-        testCaseId: data.testCaseId,
-        testCaseName: data.testCaseName, // 直接使用存储的测试用例名称
-        status: data.status,
-        tokens: data.tokens,
-        actualTokens: data.actualTokens, // API返回的实际token数据
-        totalSpeed: finalTotalSpeed, // 使用修正后的总速度
-        currentSpeed: finalCurrentSpeed, // 使用修正后的当前速度
-        outputSpeed, // 纯输出速度
-        firstTokenTime: data.firstTokenTime,
-        startTime: data.startTime,
-        duration: data.actualDuration, // 与BatchResults保持一致，使用duration字段
-        // 添加历史数据供图表使用（多轮测试时包含累计数据）
-        historyData: combinedHistoryData
-      });
+        actualDuration: data.actualDuration || (data.status === 'running' ? now - data.startTime : data.actualDuration)
+      };
+
+      result.push(transformTestData(rawData));
     }
 
     return result;
@@ -260,7 +282,7 @@
         // 累计历史数据用于图表显示
         roundResults.forEach(result => {
           const existingData = accumulatedHistoryData.value.get(result.testCaseId) || [];
-          const newHistoryData = result.chunks.map(chunk => ({
+          const newHistoryData: HistoryDataPoint[] = result.chunks.map(chunk => ({
             time: chunk.timestamp,
             totalSpeed: result.tokensPerSecond,
             currentSpeed: result.tokensPerSecond,
@@ -347,50 +369,10 @@
     }
   };
 
-  /** 计算完成测试的数据（用于显示结果）- 与realtimeTestProgress完全一致的计算逻辑 */
+  /** 计算完成测试的数据（用于显示结果）- 使用统一的数据转换函数 */
   const calculateCompletedTestData = (result: TokenTestResult) => {
-    // 使用与realtimeTestProgress完全相同的数据计算逻辑
-    const duration = result.duration;
-
-    // 使用 completionTokens 计算速度，如果没有则回退到计算的 tokens
-    const tokensForSpeed = result.actualTokens?.completionTokens || result.tokens || 0;
-    const calculatedTotalSpeed = duration > 0 ? (tokensForSpeed * 1000) / duration : 0;
-
-    // 计算纯输出速度（不包含首次响应时间）
-    const outputElapsedTime = result.firstTokenTime ? (duration - result.firstTokenTime) : 0;
-    const outputSpeed = outputElapsedTime > 0 && tokensForSpeed > 0 ? (tokensForSpeed * 1000) / outputElapsedTime : 0;
-
-    // 对于已完成测试，使用重新计算的精确速度；对于运行中的测试，使用实时更新的速度
-    // 与realtimeTestProgress完全保持一致，但这里都是已完成测试，所以直接使用calculatedTotalSpeed
-    const finalTotalSpeed = result.status === 'completed' ? calculatedTotalSpeed : (result.tokensPerSecond || calculatedTotalSpeed);
-    const finalCurrentSpeed = result.status === 'completed' ? finalTotalSpeed : (result.tokensPerSecond || finalTotalSpeed);
-
-    // 获取累计的历史数据 - 与realtimeTestProgress保持一致
-    const accumulatedData = accumulatedHistoryData.value.get(result.testCaseId) || [];
-    const combinedHistoryData = enableMultiRound.value ?
-      [...accumulatedData, ...(result.chunks || [])] :
-      (result.chunks || []);
-
-    return {
-      testId: result.id,
-      testCaseId: result.testCaseId,
-      testCaseName: result.testCaseName,
-      status: result.status,
-      tokens: result.tokens,
-      actualTokens: result.actualTokens, // API返回的实际token数据
-      totalSpeed: finalTotalSpeed, // 使用修正后的总速度
-      currentSpeed: finalCurrentSpeed, // 使用修正后的当前速度
-      outputSpeed, // 纯输出速度
-      firstTokenTime: result.firstTokenTime,
-      startTime: result.timestamp.getTime(),
-      duration: duration, // 使用duration字段
-      historyData: combinedHistoryData.map(chunk => ({
-        time: 'timestamp' in chunk ? chunk.timestamp : chunk.time,
-        totalSpeed: result.tokensPerSecond || 0,
-        currentSpeed: result.tokensPerSecond || 0,
-        outputSpeed: result.outputSpeed || 0
-      }))
-    };
+    // 使用统一的数据转换函数，确保单一数据源
+    return transformTestData(result);
   };
 
   onMounted(() => {

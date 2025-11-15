@@ -3,27 +3,7 @@
   import { computed } from 'vue';
   import TestProgressCard from './TestProgressCard.vue';
   import type { TestMode } from '../../../config/test-cases';
-
-  interface ProgressData {
-    testId: string;
-    testCaseId: string;
-    testCaseName: string;
-    status: 'running' | 'completed' | 'error';
-    tokens: number;
-    totalSpeed: number;
-    currentSpeed: number;
-    outputSpeed: number;
-    firstTokenTime?: number;
-    startTime: number;
-    duration: number; // 总耗时（毫秒），与BatchResults保持一致
-    // 添加历史数据
-    historyData: Array<{
-      time: number;
-      totalSpeed: number;
-      currentSpeed: number;
-      outputSpeed: number;
-    }>;
-  }
+  import type { ProgressData } from '../../../types/test-progress';
 
   interface Props {
     isBatchLoading: boolean;
