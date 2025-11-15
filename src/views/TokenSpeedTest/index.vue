@@ -124,13 +124,13 @@
         data.actualDuration = now - data.startTime;
       }
 
-      // 计算总速度（包含首次响应时间）- 使用completionTokens，因为总速度指的也是输出速度
-      const outputTokens = data.actualTokens?.completionTokens || data.tokens;
-      const calculatedTotalSpeed = data.actualDuration > 0 ? (outputTokens * 1000) / data.actualDuration : 0;
+      // 使用 completionTokens 计算速度，如果没有则回退到计算的 tokens
+      const tokensForSpeed = data.actualTokens?.completionTokens || data.tokens || 0;
+      const calculatedTotalSpeed = data.actualDuration > 0 ? (tokensForSpeed * 1000) / data.actualDuration : 0;
 
-      // 计算纯输出速度（不包含首次响应时间）- 使用completionTokens
+      // 计算纯输出速度（不包含首次响应时间）
       const outputElapsedTime = data.firstTokenTime ? (data.actualDuration - data.firstTokenTime) : 0;
-      const outputSpeed = outputElapsedTime > 0 && outputTokens > 0 ? (outputTokens * 1000) / outputElapsedTime : 0;
+      const outputSpeed = outputElapsedTime > 0 && tokensForSpeed > 0 ? (tokensForSpeed * 1000) / outputElapsedTime : 0;
 
       // 对于已完成测试，使用重新计算的精确速度；对于运行中的测试，使用实时更新的速度
       const finalTotalSpeed = data.status === 'completed' ? calculatedTotalSpeed : (data.speed || calculatedTotalSpeed);
@@ -352,17 +352,24 @@
     // 使用与realtimeTestProgress完全相同的数据计算逻辑
     const duration = result.duration;
 
-    // 计算总速度（包含首次响应时间）- 使用completionTokens，因为总速度指的也是输出速度
-    const outputTokens = result.actualTokens?.completionTokens || result.tokens;
-    const calculatedTotalSpeed = duration > 0 ? (outputTokens * 1000) / duration : 0;
+    // 使用 completionTokens 计算速度，如果没有则回退到计算的 tokens
+    const tokensForSpeed = result.actualTokens?.completionTokens || result.tokens || 0;
+    const calculatedTotalSpeed = duration > 0 ? (tokensForSpeed * 1000) / duration : 0;
 
-    // 计算纯输出速度（不包含首次响应时间）- 使用completionTokens
+    // 计算纯输出速度（不包含首次响应时间）
     const outputElapsedTime = result.firstTokenTime ? (duration - result.firstTokenTime) : 0;
-    const outputSpeed = outputElapsedTime > 0 && outputTokens > 0 ? (outputTokens * 1000) / outputElapsedTime : 0;
+    const outputSpeed = outputElapsedTime > 0 && tokensForSpeed > 0 ? (tokensForSpeed * 1000) / outputElapsedTime : 0;
 
-    // 对于已完成测试，使用重新计算的精确速度；与实时测试保持一致
-    const finalTotalSpeed = calculatedTotalSpeed;
-    const finalCurrentSpeed = finalTotalSpeed;
+    // 对于已完成测试，使用重新计算的精确速度；对于运行中的测试，使用实时更新的速度
+    // 与realtimeTestProgress完全保持一致，但这里都是已完成测试，所以直接使用calculatedTotalSpeed
+    const finalTotalSpeed = result.status === 'completed' ? calculatedTotalSpeed : (result.tokensPerSecond || calculatedTotalSpeed);
+    const finalCurrentSpeed = result.status === 'completed' ? finalTotalSpeed : (result.tokensPerSecond || finalTotalSpeed);
+
+    // 获取累计的历史数据 - 与realtimeTestProgress保持一致
+    const accumulatedData = accumulatedHistoryData.value.get(result.testCaseId) || [];
+    const combinedHistoryData = enableMultiRound.value ?
+      [...accumulatedData, ...(result.chunks || [])] :
+      (result.chunks || []);
 
     return {
       testId: result.id,
@@ -370,19 +377,19 @@
       testCaseName: result.testCaseName,
       status: result.status,
       tokens: result.tokens,
-      actualTokens: result.actualTokens,
-      totalSpeed: finalTotalSpeed, // 使用与实时测试相同的总速度计算
-      currentSpeed: finalCurrentSpeed, // 使用与实时测试相同的当前速度计算
-      outputSpeed: outputSpeed, // 使用与实时测试相同的输出速度计算
+      actualTokens: result.actualTokens, // API返回的实际token数据
+      totalSpeed: finalTotalSpeed, // 使用修正后的总速度
+      currentSpeed: finalCurrentSpeed, // 使用修正后的当前速度
+      outputSpeed, // 纯输出速度
       firstTokenTime: result.firstTokenTime,
       startTime: result.timestamp.getTime(),
-      duration: result.duration,
-      historyData: result.chunks ? result.chunks.map(chunk => ({
-        time: chunk.timestamp,
+      duration: duration, // 使用duration字段
+      historyData: combinedHistoryData.map(chunk => ({
+        time: 'timestamp' in chunk ? chunk.timestamp : chunk.time,
         totalSpeed: result.tokensPerSecond || 0,
         currentSpeed: result.tokensPerSecond || 0,
         outputSpeed: result.outputSpeed || 0
-      })) : []
+      }))
     };
   };
 

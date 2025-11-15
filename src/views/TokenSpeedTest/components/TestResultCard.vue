@@ -38,13 +38,13 @@
     // 使用与批量测试进度完全相同的数据计算逻辑
     const duration = result.duration;
 
-    // 计算总速度（包含首次响应时间）- 使用completionTokens，因为总速度指的也是输出速度
-    const outputTokens = result.actualTokens?.completionTokens || result.tokens;
-    const calculatedTotalSpeed = duration > 0 ? (outputTokens * 1000) / duration : 0;
+    // 使用 completionTokens 计算速度，如果没有则回退到计算的 tokens
+    const tokensForSpeed = result.actualTokens?.completionTokens || result.tokens || 0;
+    const calculatedTotalSpeed = duration > 0 ? (tokensForSpeed * 1000) / duration : 0;
 
-    // 计算纯输出速度（不包含首次响应时间）- 使用completionTokens
+    // 计算纯输出速度（不包含首次响应时间）
     const outputElapsedTime = result.firstTokenTime ? (duration - result.firstTokenTime) : 0;
-    const outputSpeed = outputElapsedTime > 0 && outputTokens > 0 ? (outputTokens * 1000) / outputElapsedTime : 0;
+    const outputSpeed = outputElapsedTime > 0 && tokensForSpeed > 0 ? (tokensForSpeed * 1000) / outputElapsedTime : 0;
 
     return {
       testId: result.id,

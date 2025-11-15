@@ -123,19 +123,17 @@
             :class="[
               'text-xl font-bold transition-colors',
               progress.status === 'running' ? 'text-yellow-600' :
-              progress.status === 'completed' ?
-                (progress.actualTokens?.totalTokens ? 'text-green-600' : 'text-yellow-600') :
+              progress.status === 'completed' ? 'text-green-600' :
               'text-red-600'
             ]"
             :title="progress.status === 'running' ?
-              '运行中的token数量为预估值，可能不准确' :
-              progress.status === 'completed' ?
-                (progress.actualTokens?.totalTokens ? '测试完成，为实际接口返回的token数量' : '测试完成，但无接口返回的实际token数据，使用估算值') :
+              '运行中的completion token数量为预估值' :
+              progress.status === 'completed' ? '测试完成，显示实际接口返回的completion token数量' :
               '测试失败，token数量可能不完整'"
           >
-            {{ (progress.actualTokens?.totalTokens || progress.tokens).toLocaleString() }}
+            {{ (progress.actualTokens?.completionTokens || progress.tokens || 0).toLocaleString() }}
           </div>
-          <div class="text-xs text-gray-600">Tokens</div>
+          <div class="text-xs text-gray-600">Completion Tokens</div>
         </div>
 
         <!-- 总速度 -->

@@ -309,15 +309,15 @@ export function useTokenSpeedTest() {
       newTest.duration = totalDuration;
       newTest.tokens = finalTokens;
 
-      // 计算总速度（包括首次响应时间）- 使用completionTokens，因为总速度指的也是输出速度
-      const outputTokensForSpeed = newTest.actualTokens?.completionTokens || finalTokens;
+      // 使用 completionTokens 计算总速度（包括首次响应时间），如果没有则回退到计算的 tokens
+      const tokensForSpeed = newTest.actualTokens?.completionTokens || finalTokens || 0;
       newTest.tokensPerSecond =
-        outputTokensForSpeed > 0
-          ? Math.round(((outputTokensForSpeed * 1000) / totalDuration) * 10) / 10
+        tokensForSpeed > 0
+          ? Math.round(((tokensForSpeed * 1000) / totalDuration) * 10) / 10
           : 0;
 
-      // 计算纯输出速度（不包括首次响应时间）- 优先使用API返回的completionTokens
-      const outputTokens = newTest.actualTokens?.completionTokens || finalTokens;
+      // 计算纯输出速度（不包括首次响应时间）
+      const outputTokens = tokensForSpeed;
       if (newTest.firstTokenTime && outputTokens > 0) {
         const outputDuration = totalDuration - newTest.firstTokenTime;
         newTest.outputSpeed =
@@ -508,18 +508,17 @@ export function useTokenSpeedTest() {
               if (onRealTimeUpdate && now - lastUpdateTime >= UPDATE_INTERVAL_MS) {
                 lastUpdateTime = now;
 
-                // 计算当前时间点的各项速度数据 - 使用completionTokens，因为总速度指的也是输出速度
+                // 使用 completionTokens 计算当前时间点的各项速度数据，如果没有则回退到计算的 tokens
                 const currentDuration = now - startTime;
-                const outputTokens =
-                  realtimeData.actualTokens?.completionTokens || realtimeData.tokens;
+                const tokensForSpeed = realtimeData.actualTokens?.completionTokens || realtimeData.tokens || 0;
                 const totalSpeed =
-                  currentDuration > 0 ? (outputTokens * 1000) / currentDuration : 0;
+                  currentDuration > 0 ? (tokensForSpeed * 1000) / currentDuration : 0;
                 const outputDuration = realtimeData.firstTokenTime
                   ? currentDuration - realtimeData.firstTokenTime
                   : 0;
                 const outputSpeed =
-                  outputDuration > 0 && outputTokens > 0
-                    ? (outputTokens * 1000) / outputDuration
+                  outputDuration > 0 && tokensForSpeed > 0
+                    ? (tokensForSpeed * 1000) / outputDuration
                     : 0;
 
                 // 添加历史数据点
