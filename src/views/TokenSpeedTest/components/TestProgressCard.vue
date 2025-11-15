@@ -1,6 +1,6 @@
 <script setup lang="ts">
   /** 测试进度卡片组件 - 带背景速度曲线图 */
-  import { computed, ref, onMounted, onUnmounted, nextTick, watch } from 'vue';
+  import { computed, useTemplateRef } from 'vue';
   import SpeedChart from './SpeedChart.vue';
 
   interface ProgressData {
@@ -15,6 +15,14 @@
     firstTokenTime?: number;
     startTime: number;
     elapsedTime: number;
+    actualDuration: number; // 实际测试持续时间，未完成时为当前运行时间
+    // 添加历史数据
+    historyData: Array<{
+      time: number;
+      totalSpeed: number;
+      currentSpeed: number;
+      outputSpeed: number;
+    }>;
   }
 
   interface Props {
@@ -25,7 +33,7 @@
   const props = defineProps<Props>();
 
   // 获取卡片尺寸
-  const cardElement = ref<HTMLElement>();
+  const cardElement = useTemplateRef<HTMLElement>('cardRef');
 
   // 监听卡片尺寸变化
   const chartSize = computed(() => {
@@ -40,63 +48,8 @@
     };
   });
 
-  // 计算图表数据
-  const chartData = computed(() => {
-    if (!props.progress) return [];
-
-    return [{
-      time: Date.now() - props.progress.startTime,
-      totalSpeed: props.progress.totalSpeed || 0,
-      currentSpeed: props.progress.currentSpeed || 0,
-      outputSpeed: props.progress.outputSpeed || 0
-    }];
-  });
-
-  // 持续更新数据，即使测试完成
-  const continuousChartData = ref(chartData.value);
-
-  // 监听 props.progress 变化，更新图表数据
-  const updateChartData = () => {
-    if (props.progress) {
-      const newPoint = {
-        time: Date.now() - props.progress.startTime,
-        totalSpeed: props.progress.totalSpeed || 0,
-        currentSpeed: props.progress.currentSpeed || 0,
-        outputSpeed: props.progress.outputSpeed || 0
-      };
-
-      // 添加数据点（无论测试状态如何）
-      continuousChartData.value.push(newPoint);
-      // 限制数据点数量
-      if (continuousChartData.value.length > 100) {
-        continuousChartData.value.shift();
-      }
-    }
-  };
-
-  // 定期更新图表数据
-  let updateInterval: number;
-
-  onMounted(() => {
-    updateInterval = setInterval(updateChartData, 500) as any;
-
-    // 获取卡片元素引用
-    nextTick(() => {
-      const card = document.querySelector('.test-progress-card');
-      if (card) {
-        cardElement.value = card as HTMLElement;
-      }
-    });
-  });
-
-  // 监听 props.progress 变化，立即更新图表数据
-  watch(() => props.progress, updateChartData, { deep: true });
-
-  onUnmounted(() => {
-    if (updateInterval) {
-      clearInterval(updateInterval);
-    }
-  });
+  // 直接使用历史数据
+  const chartData = computed(() => props.progress.historyData);
 
   // 格式化时间
   const formatTime = (ms: number): string => {
@@ -113,12 +66,12 @@
 </script>
 
 <template>
-  <div class="test-progress-card relative bg-white rounded-lg border border-gray-200 overflow-hidden">
+  <div ref="cardRef" class="test-progress-card relative bg-white rounded-lg border border-gray-200 overflow-hidden">
     <!-- 背景速度曲线图 -->
     <div class="absolute inset-0 opacity-15 overflow-hidden">
       <SpeedChart
-        v-if="showChart && continuousChartData.length > 0"
-        :data="continuousChartData"
+        v-if="showChart && chartData.length > 0"
+        :data="chartData"
         :width="chartSize.width"
         :height="chartSize.height"
         :show-legend="false"
@@ -132,7 +85,7 @@
         <div class="flex-1 min-w-0">
           <div class="font-medium text-gray-900 truncate">{{ progress.testCaseName }}</div>
           <div class="text-xs text-gray-500">
-            运行时间: {{ formatTime(progress.elapsedTime) }}
+            运行时间: {{ formatTime(progress.actualDuration) }}
           </div>
         </div>
         <span
@@ -168,12 +121,12 @@
           <div class="text-xs text-gray-600">Tokens</div>
         </div>
 
-        <!-- 当前速度 -->
+        <!-- 平均速度 -->
         <div class="space-y-1">
           <div class="text-xl font-bold text-purple-600">
-            {{ formatSpeed(progress.currentSpeed) }}
+            {{ formatSpeed(progress.totalSpeed) }}
           </div>
-          <div class="text-xs text-gray-600">瞬时速度</div>
+          <div class="text-xs text-gray-600">平均速度</div>
         </div>
 
         <!-- 首次响应时间 -->
@@ -185,19 +138,19 @@
         </div>
       </div>
 
-      <!-- 底部指标条 -->
+      <!-- 底部指标条 - 参考 BatchResults 显示 -->
       <div class="grid grid-cols-2 gap-3 pt-2 border-t border-gray-100">
-        <!-- 总速度 -->
+        <!-- 总耗时 -->
         <div class="flex justify-between items-center">
-          <span class="text-xs text-gray-500">总速度</span>
+          <span class="text-xs text-gray-500">总耗时</span>
           <span class="text-xs font-medium text-gray-900">
-            {{ formatSpeed(progress.totalSpeed) }}
+            {{ formatTime(progress.elapsedTime) }}
           </span>
         </div>
 
-        <!-- 纯输出速度 -->
+        <!-- 输出速度 -->
         <div class="flex justify-between items-center">
-          <span class="text-xs text-gray-500">纯输出速度</span>
+          <span class="text-xs text-gray-500">输出速度</span>
           <span class="text-xs font-medium text-gray-900">
             {{ formatSpeed(progress.outputSpeed) }}
           </span>

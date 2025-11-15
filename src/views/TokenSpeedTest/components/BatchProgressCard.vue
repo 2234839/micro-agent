@@ -16,6 +16,14 @@
     firstTokenTime?: number;
     startTime: number;
     elapsedTime: number;
+    actualDuration: number; // 实际测试持续时间，未完成时为当前运行时间
+    // 添加历史数据
+    historyData: Array<{
+      time: number;
+      totalSpeed: number;
+      currentSpeed: number;
+      outputSpeed: number;
+    }>;
   }
 
   interface Props {

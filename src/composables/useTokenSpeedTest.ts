@@ -91,6 +91,13 @@ export function useTokenSpeedTest() {
     firstTokenTime?: number;
     startTime: number;
     currentSpeed: number;
+    actualDuration: number; // 实际测试持续时间，未完成时为当前运行时间
+    historyData: Array<{
+      time: number;
+      totalSpeed: number;
+      currentSpeed: number;
+      outputSpeed: number;
+    }>;
   }>>(new Map());
 
   /** 实时数据 */
@@ -343,6 +350,14 @@ export function useTokenSpeedTest() {
       firstTokenTime: undefined as number | undefined,
       startTime,
       currentSpeed: 0,
+      actualDuration: 0, // 实际测试持续时间，未完成时为当前运行时间
+      historyData: [] as Array<{
+        time: number;
+        totalSpeed: number;
+        currentSpeed: number;
+        outputSpeed: number;
+      }>,
+      endTime: undefined as number | undefined,
     });
     activeTests.value.set(testId, realtimeData);
 
@@ -452,6 +467,22 @@ export function useTokenSpeedTest() {
               const now = Date.now();
               if (onRealTimeUpdate && (now - lastUpdateTime) >= UPDATE_INTERVAL_MS) {
                 lastUpdateTime = now;
+
+                // 计算当前时间点的各项速度数据
+                const currentDuration = now - startTime;
+                const totalSpeed = currentDuration > 0 ? (realtimeData.tokens * 1000) / currentDuration : 0;
+                const outputDuration = realtimeData.firstTokenTime ? (currentDuration - realtimeData.firstTokenTime) : 0;
+                const outputSpeed = outputDuration > 0 && realtimeData.tokens > 0 ? (realtimeData.tokens * 1000) / outputDuration : 0;
+
+                // 添加历史数据点
+                const historyPoint = {
+                  time: currentDuration,
+                  totalSpeed,
+                  currentSpeed: realtimeData.speed,
+                  outputSpeed
+                };
+                realtimeData.historyData.push(historyPoint);
+
                 onRealTimeUpdate(testId, {
                   tokens: realtimeData.tokens,
                   speed: realtimeData.speed,
@@ -484,10 +515,21 @@ export function useTokenSpeedTest() {
         testResult.outputSpeed = outputDuration > 0 ? Math.round((finalTokens * 1000) / outputDuration * 10) / 10 : 0;
       }
 
-      // 更新实时状态为完成
+      // 更新实时状态为完成，记录实际的结束时间和持续时间
       realtimeData.status = 'completed';
       realtimeData.speed = testResult.tokensPerSecond;
       realtimeData.currentSpeed = testResult.tokensPerSecond; // 确保当前速度也更新
+      realtimeData.endTime = endTime;
+      realtimeData.actualDuration = totalDuration;
+
+      // 添加最终的历史数据点
+      const finalHistoryPoint = {
+        time: totalDuration, // 使用总持续时间作为最终时间点
+        totalSpeed: testResult.tokensPerSecond,
+        currentSpeed: testResult.tokensPerSecond,
+        outputSpeed: testResult.outputSpeed || 0
+      };
+      realtimeData.historyData.push(finalHistoryPoint);
 
       // 强制触发响应性更新
       const updatedData = { ...realtimeData };
@@ -510,8 +552,22 @@ export function useTokenSpeedTest() {
       testResult.status = 'error';
       testResult.duration = Date.now() - startTime;
 
-      // 更新实时状态为错误
+      // 更新实时状态为错误，记录实际的结束时间和持续时间
+      const errorEndTime = Date.now();
+      const errorDuration = errorEndTime - startTime;
+
       realtimeData.status = 'error';
+      realtimeData.endTime = errorEndTime;
+      realtimeData.actualDuration = errorDuration;
+
+      // 添加错误时点的历史数据
+      const errorHistoryPoint = {
+        time: errorDuration,
+        totalSpeed: realtimeData.speed,
+        currentSpeed: realtimeData.currentSpeed,
+        outputSpeed: 0
+      };
+      realtimeData.historyData.push(errorHistoryPoint);
 
       // 强制触发响应性更新
       const updatedData = { ...realtimeData };

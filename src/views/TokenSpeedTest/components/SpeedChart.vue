@@ -1,6 +1,7 @@
 <script setup lang="ts">
-  /** 速度曲线图组件 */
-  import { computed, ref, onMounted, onUnmounted, watch } from 'vue';
+  /** 速度曲线图组件 - 使用 ECharts 渲染 */
+  import { computed, ref, onMounted, onUnmounted, watch, nextTick } from 'vue';
+  import * as echarts from 'echarts';
 
   interface SpeedDataPoint {
     time: number;
@@ -22,118 +23,15 @@
     showLegend: true
   });
 
+  // 图表 DOM 引用
+  const chartRef = ref<HTMLElement>();
+  let chartInstance: echarts.ECharts | null = null;
+
   // 存储历史数据点
   const historyData = ref<SpeedDataPoint[]>([]);
 
   // 最大数据点数量（避免无限增长）
   const MAX_DATA_POINTS = 100;
-
-  // 添加新数据点
-  const addDataPoint = (point: SpeedDataPoint) => {
-    historyData.value.push(point);
-    if (historyData.value.length > MAX_DATA_POINTS) {
-      historyData.value.shift();
-    }
-  };
-
-  // 计算坐标轴范围
-  const scales = computed(() => {
-    if (historyData.value.length === 0) {
-      return {
-        xMin: 0,
-        xMax: 1,
-        yMin: 0,
-        yMax: 100
-      };
-    }
-
-    const times = historyData.value.map(d => d.time);
-    const speeds = historyData.value.flatMap(d => [d.totalSpeed, d.currentSpeed, d.outputSpeed]);
-
-    const xMin = Math.min(...times);
-    const xMax = Math.max(...times);
-    const yMin = 0;
-    const yMax = Math.max(...speeds, 100) * 1.1; // 添加 10% 的顶部边距
-
-    return { xMin, xMax, yMin, yMax };
-  });
-
-  // 坐标转换函数
-  const xScale = (time: number) => {
-    if (scales.value.xMax === scales.value.xMin) return 0;
-    return ((time - scales.value.xMin) / (scales.value.xMax - scales.value.xMin)) * props.width;
-  };
-
-  const yScale = (speed: number) => {
-    if (scales.value.yMax === scales.value.yMin) return props.height;
-    return props.height - ((speed - scales.value.yMin) / (scales.value.yMax - scales.value.yMin)) * props.height;
-  };
-
-  // 生成 SVG 路径
-  const createPath = (points: number[][]) => {
-    if (points.length === 0) return '';
-
-    let path = `M ${points[0]![0]} ${points[0]![1]}`;
-    for (let i = 1; i < points.length; i++) {
-      path += ` L ${points[i]![0]} ${points[i]![1]}`;
-    }
-    return path;
-  };
-
-  // 计算路径
-  const totalSpeedPath = computed(() => {
-    const points = historyData.value.map(d => [xScale(d.time), yScale(d.totalSpeed)]);
-    return createPath(points);
-  });
-
-  const currentSpeedPath = computed(() => {
-    const points = historyData.value.map(d => [xScale(d.time), yScale(d.currentSpeed)]);
-    return createPath(points);
-  });
-
-  const outputSpeedPath = computed(() => {
-    const points = historyData.value.map(d => [xScale(d.time), yScale(d.outputSpeed)]);
-    return createPath(points);
-  });
-
-  // 监听父组件传入的数据变化
-  const updateData = () => {
-    if (props.data.length > 0) {
-      const latestData = props.data[props.data.length - 1];
-      if (latestData) {
-        addDataPoint(latestData);
-      }
-    }
-  };
-
-  // 定时更新数据
-  let updateInterval: number;
-
-  onMounted(() => {
-    // 初始化数据
-    updateData();
-
-    // 定期同步数据
-    updateInterval = setInterval(updateData, 100) as any;
-  });
-
-  onUnmounted(() => {
-    if (updateInterval) {
-      clearInterval(updateInterval);
-    }
-  });
-
-  // 监听 props.data 变化 - 立即同步所有数据点
-  watch(() => props.data, (newData) => {
-    if (newData && newData.length > 0) {
-      // 清空历史数据，重新同步所有数据点
-      historyData.value = [...newData];
-      // 限制数据点数量
-      if (historyData.value.length > MAX_DATA_POINTS) {
-        historyData.value = historyData.value.slice(-MAX_DATA_POINTS);
-      }
-    }
-  }, { deep: true, immediate: true });
 
   // 格式化速度显示
   const formatSpeed = (speed: number): string => {
@@ -143,6 +41,280 @@
       return `${(speed / 1000).toFixed(1)}k/s`;
     }
   };
+
+  // 格式化时间显示
+  const formatTime = (ms: number): string => {
+    if (ms < 1000) return `${ms}ms`;
+    if (ms < 60000) return `${(ms / 1000).toFixed(1)}s`;
+    return `${(ms / 60000).toFixed(1)}m`;
+  };
+
+  // 计算图表配置
+  const chartOption = computed(() => {
+    if (historyData.value.length === 0) {
+      return {
+        grid: { show: false },
+        xAxis: { show: false },
+        yAxis: { show: false }
+      };
+    }
+
+    const times = historyData.value.map(d => d.time);
+    const speeds = historyData.value.flatMap(d => [d.totalSpeed, d.currentSpeed, d.outputSpeed]);
+    const maxSpeed = Math.max(...speeds, 100) * 1.2; // 添加 20% 的顶部边距
+
+    return {
+      grid: {
+        left: props.showLegend ? 40 : 10,
+        right: 10,
+        top: props.showLegend ? 30 : 10,
+        bottom: props.showLegend ? 30 : 10,
+        containLabel: true
+      },
+      tooltip: {
+        trigger: 'axis',
+        backgroundColor: 'rgba(255, 255, 255, 0.95)',
+        borderColor: 'rgba(0, 0, 0, 0.1)',
+        borderWidth: 1,
+        textStyle: { color: '#1f2937', fontSize: 12 },
+        padding: [8, 12],
+        borderRadius: 8,
+        shadowColor: 'rgba(0, 0, 0, 0.1)',
+        shadowBlur: 10,
+        shadowOffsetX: 0,
+        shadowOffsetY: 2,
+        formatter: (params: any[]) => {
+          const data = params[0];
+          if (!data || historyData.value.length === 0) return '';
+
+          const index = data.dataIndex;
+          const point = historyData.value[index];
+          if (!point) return '';
+
+          return `
+            <div style="padding: 4px 0;">
+              <div style="font-weight: 600; margin-bottom: 6px; color: #1f2937; font-size: 13px;">
+                ⏱️ ${formatTime(point.time)}
+              </div>
+              <div style="display: flex; align-items: center; margin-bottom: 3px;">
+                <span style="display: inline-block; width: 8px; height: 2px; background: #3b82f6; margin-right: 8px; border-radius: 1px;"></span>
+                <span style="color: #3b82f6; font-weight: 500;">总速度:</span>
+                <span style="color: #6b7280; margin-left: 4px;">${formatSpeed(point.totalSpeed)}</span>
+              </div>
+              <div style="display: flex; align-items: center; margin-bottom: 3px;">
+                <span style="display: inline-block; width: 8px; height: 2px; background: #10b981; margin-right: 8px; border-radius: 1px;"></span>
+                <span style="color: #10b981; font-weight: 500;">瞬时速度:</span>
+                <span style="color: #6b7280; margin-left: 4px;">${formatSpeed(point.currentSpeed)}</span>
+              </div>
+              <div style="display: flex; align-items: center;">
+                <span style="display: inline-block; width: 8px; height: 2px; background: #a855f7; margin-right: 8px; border-radius: 1px;"></span>
+                <span style="color: #a855f7; font-weight: 500;">纯输出速度:</span>
+                <span style="color: #6b7280; margin-left: 4px;">${formatSpeed(point.outputSpeed)}</span>
+              </div>
+            </div>
+          `;
+        }
+      },
+      legend: {
+        show: props.showLegend,
+        data: ['总速度', '瞬时速度', '纯输出速度'],
+        textStyle: { fontSize: 11, color: '#666' },
+        itemWidth: 15,
+        itemHeight: 8,
+        top: 5
+      },
+      xAxis: {
+        type: 'category',
+        data: times.map(t => formatTime(t)),
+        show: props.showLegend,
+        axisLine: { show: props.showLegend, lineStyle: { color: '#e5e7eb' } },
+        axisTick: { show: false },
+        axisLabel: {
+          show: props.showLegend,
+          fontSize: 10,
+          color: '#999',
+          interval: Math.floor(times.length / 5) // 最多显示5个标签
+        }
+      },
+      yAxis: {
+        type: 'value',
+        show: props.showLegend,
+        min: 0,
+        max: maxSpeed,
+        axisLine: { show: props.showLegend, lineStyle: { color: '#e5e7eb' } },
+        axisTick: { show: false },
+        axisLabel: {
+          show: props.showLegend,
+          fontSize: 10,
+          color: '#999',
+          formatter: (value: number) => formatSpeed(value)
+        },
+        splitLine: {
+          show: true,
+          lineStyle: {
+            color: props.showLegend ? '#f3f4f6' : 'transparent',
+            type: 'dashed'
+          }
+        }
+      },
+      series: [
+        {
+          name: '总速度',
+          type: 'line',
+          data: historyData.value.map(d => d.totalSpeed),
+          smooth: true,
+          smoothMonotone: 'x', // 确保 X 轴单调性
+          symbol: props.showLegend ? 'circle' : 'none',
+          symbolSize: props.showLegend ? 4 : 0,
+          lineStyle: {
+            color: '#3b82f6',
+            width: 2.5,
+            opacity: props.showLegend ? 0.9 : 0.7,
+            shadowColor: 'rgba(59, 130, 246, 0.3)',
+            shadowBlur: props.showLegend ? 4 : 0
+          },
+          itemStyle: {
+            color: '#3b82f6',
+            borderColor: '#fff',
+            borderWidth: 1
+          },
+          emphasis: {
+            disabled: !props.showLegend,
+            scale: props.showLegend ? 1.5 : 1,
+            lineStyle: { width: 3 }
+          },
+          animation: false,
+          animationDuration: 0
+        },
+        {
+          name: '瞬时速度',
+          type: 'line',
+          data: historyData.value.map(d => d.currentSpeed),
+          smooth: true,
+          smoothMonotone: 'x',
+          symbol: props.showLegend ? 'circle' : 'none',
+          symbolSize: props.showLegend ? 4 : 0,
+          lineStyle: {
+            color: '#10b981',
+            width: 2.5,
+            opacity: props.showLegend ? 0.9 : 0.7,
+            shadowColor: 'rgba(16, 185, 129, 0.3)',
+            shadowBlur: props.showLegend ? 4 : 0
+          },
+          itemStyle: {
+            color: '#10b981',
+            borderColor: '#fff',
+            borderWidth: 1
+          },
+          emphasis: {
+            disabled: !props.showLegend,
+            scale: props.showLegend ? 1.5 : 1,
+            lineStyle: { width: 3 }
+          },
+          animation: false,
+          animationDuration: 0
+        },
+        {
+          name: '纯输出速度',
+          type: 'line',
+          data: historyData.value.map(d => d.outputSpeed),
+          smooth: true,
+          smoothMonotone: 'x',
+          symbol: props.showLegend ? 'circle' : 'none',
+          symbolSize: props.showLegend ? 4 : 0,
+          lineStyle: {
+            color: '#a855f7',
+            width: 2.5,
+            opacity: props.showLegend ? 0.9 : 0.7,
+            shadowColor: 'rgba(168, 85, 247, 0.3)',
+            shadowBlur: props.showLegend ? 4 : 0
+          },
+          itemStyle: {
+            color: '#a855f7',
+            borderColor: '#fff',
+            borderWidth: 1
+          },
+          emphasis: {
+            disabled: !props.showLegend,
+            scale: props.showLegend ? 1.5 : 1,
+            lineStyle: { width: 3 }
+          },
+          animation: false,
+          animationDuration: 0
+        }
+      ]
+    };
+  });
+
+  // 初始化图表
+  const initChart = async () => {
+    if (!chartRef.value) return;
+
+    await nextTick();
+
+    // 销毁已有实例
+    if (chartInstance) {
+      chartInstance.dispose();
+    }
+
+    // 创建新实例 - 使用更现代的主题配置
+    chartInstance = echarts.init(chartRef.value, 'light', {
+      renderer: 'canvas', // 使用 canvas 渲染器，性能更好
+      useDirtyRect: false // 禁用脏矩形优化，提高质量
+    });
+
+    // 设置图表配置
+    chartInstance.setOption(chartOption.value);
+
+    // 响应式更新
+    const resizeObserver = new ResizeObserver(() => {
+      if (chartInstance) {
+        chartInstance.resize();
+      }
+    });
+    resizeObserver.observe(chartRef.value);
+
+    // 背景模式下禁用交互
+    if (!props.showLegend) {
+      chartInstance.setOption({
+        tooltip: { show: false },
+        legend: { show: false }
+      });
+    }
+  };
+
+  // 更新图表数据
+  const updateChart = () => {
+    if (chartInstance) {
+      chartInstance.setOption(chartOption.value, true);
+    }
+  };
+
+  onMounted(() => {
+    initChart();
+  });
+
+  onUnmounted(() => {
+    if (chartInstance) {
+      chartInstance.dispose();
+    }
+  });
+
+  // 监听数据变化
+  watch(() => props.data, (newData) => {
+    if (newData && newData.length > 0) {
+      // 直接使用传入的数据，不进行任何修改或限制
+      historyData.value = [...newData];
+      updateChart();
+    }
+  }, { deep: true, immediate: true });
+
+  // 监听图表尺寸变化
+  watch(() => [props.width, props.height], () => {
+    if (chartInstance) {
+      chartInstance.resize();
+    }
+  }, { flush: 'post' });
 </script>
 
 <template>
@@ -167,96 +339,16 @@
       </div>
     </div>
 
-    <div class="relative bg-transparent" :style="{ width: width + 'px', height: height + 'px' }">
-      <svg :width="width" :height="height" class="overflow-visible" :class="{ 'absolute inset-0': !showLegend }">
-        <!-- 背景模式下简化网格线 -->
-        <defs v-if="!showLegend">
-          <pattern id="grid-bg" width="50" height="50" patternUnits="userSpaceOnUse">
-            <path d="M 50 0 L 0 0 0 50" fill="none" stroke="#f3f4f6" stroke-width="0.5"/>
-          </pattern>
-        </defs>
-        <defs v-else>
-          <pattern id="grid" width="40" height="40" patternUnits="userSpaceOnUse">
-            <path d="M 40 0 L 0 0 0 40" fill="none" stroke="#e5e7eb" stroke-width="1"/>
-          </pattern>
-        </defs>
-        <rect width="100%" height="100%" :fill="!showLegend ? 'url(#grid-bg)' : 'url(#grid)'" />
-
-        <!-- 背景模式下隐藏坐标轴 -->
-        <template v-if="showLegend">
-          <line :x1="0" :y1="height" :x2="width" :y2="height" stroke="#9ca3af" stroke-width="1"/>
-          <line :x1="0" :y1="0" :x2="0" :y2="height" stroke="#9ca3af" stroke-width="1"/>
-        </template>
-
-        <!-- 速度曲线 -->
-        <!-- 总速度曲线 -->
-        <path
-          v-if="totalSpeedPath"
-          :d="totalSpeedPath"
-          fill="none"
-          stroke="#3b82f6"
-          :stroke-width="showLegend ? 2 : 1.5"
-          :opacity="showLegend ? 0.8 : 0.6"
-        />
-
-        <!-- 瞬时速度曲线 -->
-        <path
-          v-if="currentSpeedPath"
-          :d="currentSpeedPath"
-          fill="none"
-          stroke="#10b981"
-          :stroke-width="showLegend ? 2 : 1.5"
-          :opacity="showLegend ? 0.8 : 0.6"
-        />
-
-        <!-- 纯输出速度曲线 -->
-        <path
-          v-if="outputSpeedPath"
-          :d="outputSpeedPath"
-          fill="none"
-          stroke="#a855f7"
-          :stroke-width="showLegend ? 2 : 1.5"
-          :opacity="showLegend ? 0.8 : 0.6"
-        />
-
-        <!-- 当前数据点 - 背景模式下隐藏 -->
-        <g v-if="historyData.length > 0 && showLegend">
-          <!-- 总速度点 -->
-          <circle
-            :cx="xScale(historyData[historyData.length - 1]!.time)"
-            :cy="yScale(historyData[historyData.length - 1]!.totalSpeed)"
-            r="3"
-            fill="#3b82f6"
-          />
-          <!-- 瞬时速度点 -->
-          <circle
-            :cx="xScale(historyData[historyData.length - 1]!.time)"
-            :cy="yScale(historyData[historyData.length - 1]!.currentSpeed)"
-            r="3"
-            fill="#10b981"
-          />
-          <!-- 纯输出速度点 -->
-          <circle
-            :cx="xScale(historyData[historyData.length - 1]!.time)"
-            :cy="yScale(historyData[historyData.length - 1]!.outputSpeed)"
-            r="3"
-            fill="#a855f7"
-          />
-        </g>
-
-        <!-- Y轴标签 - 背景模式下隐藏 -->
-        <g v-if="showLegend" class="text-xs fill-gray-500">
-          <text x="-5" y="15" text-anchor="end" dominant-baseline="middle">{{ Math.round(scales.yMax) }}</text>
-          <text x="-5" :y="height / 2" text-anchor="end" dominant-baseline="middle">{{ Math.round(scales.yMax / 2) }}</text>
-          <text x="-5" :y="height - 5" text-anchor="end" dominant-baseline="middle">0</text>
-        </g>
-      </svg>
-
-      <!-- 无数据提示 -->
-      <div v-if="historyData.length === 0" class="absolute inset-0 flex items-center justify-center text-gray-400 text-sm">
-        等待数据...
-      </div>
-    </div>
+    <!-- ECharts 图表容器 -->
+    <div
+      ref="chartRef"
+      :style="{
+        width: width + 'px',
+        height: height + 'px',
+        opacity: showLegend ? 1 : 0.6
+      }"
+      :class="{ 'absolute inset-0': !showLegend }"
+    />
   </div>
 </template>
 
@@ -271,11 +363,12 @@
   line-height: 0;
 }
 
-svg {
+/* ECharts 容器样式 */
+.speed-chart div[ref="chartRef"] {
   display: block;
 }
 
-.speed-chart--background svg {
+.speed-chart--background div[ref="chartRef"] {
   display: block;
   margin: 0;
   padding: 0;

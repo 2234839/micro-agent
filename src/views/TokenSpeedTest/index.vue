@@ -104,14 +104,21 @@
 
     // 使用 for 循环而不是 map 来提高性能
     for (const [testId, data] of activeTests.value.entries()) {
-      const elapsedTime = now - data.startTime;
+      // 确保实际持续时间始终有值
+      if (!data.actualDuration) {
+        data.actualDuration = now - data.startTime;
+      }
 
       // 计算总速度（包含首次响应时间）
-      const totalSpeed = elapsedTime > 0 ? (data.tokens * 1000) / elapsedTime : 0;
+      const calculatedTotalSpeed = data.actualDuration > 0 ? (data.tokens * 1000) / data.actualDuration : 0;
 
       // 计算纯输出速度（不包含首次响应时间）
-      const outputElapsedTime = data.firstTokenTime ? (now - data.startTime - data.firstTokenTime) : 0;
+      const outputElapsedTime = data.firstTokenTime ? (data.actualDuration - data.firstTokenTime) : 0;
       const outputSpeed = outputElapsedTime > 0 && data.tokens > 0 ? (data.tokens * 1000) / outputElapsedTime : 0;
+
+      // 对于已完成测试，使用重新计算的精确速度；对于运行中的测试，使用实时更新的速度
+      const finalTotalSpeed = data.status === 'completed' ? calculatedTotalSpeed : (data.speed || calculatedTotalSpeed);
+      const finalCurrentSpeed = data.status === 'completed' ? finalTotalSpeed : (data.currentSpeed || finalTotalSpeed);
 
       result.push({
         testId,
@@ -119,12 +126,15 @@
         testCaseName: data.testCaseName, // 直接使用存储的测试用例名称
         status: data.status,
         tokens: data.tokens,
-        totalSpeed: data.speed || totalSpeed, // Hook 中的平均速度应该是总速度
-        currentSpeed: data.currentSpeed, // 瞬时速度
+        totalSpeed: finalTotalSpeed, // 使用修正后的总速度
+        currentSpeed: finalCurrentSpeed, // 使用修正后的当前速度
         outputSpeed, // 纯输出速度
         firstTokenTime: data.firstTokenTime,
         startTime: data.startTime,
-        elapsedTime
+        elapsedTime: data.actualDuration,
+        actualDuration: data.actualDuration, // 始终有值：0或实际持续时间
+        // 添加历史数据供图表使用
+        historyData: data.historyData || []
       });
     }
 
