@@ -1,7 +1,7 @@
 <script setup lang="ts">
   import { ref, onMounted, computed } from 'vue';
   import BaseButton from '../../components/BaseButton.vue';
-  import { useTokenSpeedTest } from '../../composables/useTokenSpeedTest';
+  import { useTokenSpeedTest, type TokenTestResult } from '../../composables/useTokenSpeedTest';
   import { useOpenAIConfig } from '../../composables/useOpenAIConfig';
   import {
     DEFAULT_TEST_CASES,
@@ -22,7 +22,8 @@
   import TestResultCard from './components/TestResultCard.vue';
   import TestConfigSelector from './components/TestConfigSelector.vue';
   import BatchProgressCard from './components/BatchProgressCard.vue';
-import TestProgressCard from './components/TestProgressCard.vue'
+  import TestProgressCard from './components/TestProgressCard.vue';
+  import MultiRoundChart from './components/MultiRoundChart.vue';
 
   // 使用 Token 速度测试 hook
   const {
@@ -65,6 +66,20 @@ import TestProgressCard from './components/TestProgressCard.vue'
   const testMode = ref<TestMode>('sequential');
   const batchProgress = ref({ current: 0, total: 0 });
   const currentRunningTest = ref<string>('');
+
+  /** 多轮测试相关 */
+  const enableMultiRound = ref(false);
+  const rounds = ref(5);
+  const interval = ref(2);
+  const multiRoundProgress = ref({ currentRound: 1, totalRounds: 1, currentTest: 0, totalTests: 0 });
+  const multiRoundResults = ref<Array<{ round: number; results: TokenTestResult[] }>>([]);
+  const isMultiRoundRunning = ref(false);
+  const accumulatedHistoryData = ref<Map<string, Array<{
+    time: number;
+    totalSpeed: number;
+    currentSpeed: number;
+    outputSpeed: number;
+  }>>>(new Map());
 
   // 计算属性
   const allCategories = computed(() => getAllCategories());
@@ -121,6 +136,12 @@ import TestProgressCard from './components/TestProgressCard.vue'
       const finalTotalSpeed = data.status === 'completed' ? calculatedTotalSpeed : (data.speed || calculatedTotalSpeed);
       const finalCurrentSpeed = data.status === 'completed' ? finalTotalSpeed : (data.currentSpeed || finalTotalSpeed);
 
+      // 获取累计的历史数据
+      const accumulatedData = accumulatedHistoryData.value.get(data.testCaseId) || [];
+      const combinedHistoryData = enableMultiRound.value ?
+        [...accumulatedData, ...(data.historyData || [])] :
+        (data.historyData || []);
+
       result.push({
         testId,
         testCaseId: data.testCaseId,
@@ -134,8 +155,8 @@ import TestProgressCard from './components/TestProgressCard.vue'
         firstTokenTime: data.firstTokenTime,
         startTime: data.startTime,
         duration: data.actualDuration, // 与BatchResults保持一致，使用duration字段
-        // 添加历史数据供图表使用
-        historyData: data.historyData || []
+        // 添加历史数据供图表使用（多轮测试时包含累计数据）
+        historyData: combinedHistoryData
       });
     }
 
@@ -177,23 +198,29 @@ import TestProgressCard from './components/TestProgressCard.vue'
 
     currentRunningTest.value = '';
 
-    await startBatchTest(
-      selectedTestCaseObjects.value,
-      testMode.value,
-      getConfig(),
-      selectedTestSuite.value,
-      (current, total, result) => {
-        batchProgress.value = { current, total };
-        // 更新当前运行的测试
-        const testCase = getTestCaseById(result.testCaseId || result.id.split('-')[0] || '');
-        currentRunningTest.value = testCase?.name || '未知测试';
-      },
-      // 实时更新回调
-      (testId, data) => {
-        // activeTests 会自动更新，这里可以添加额外的逻辑
-        // 实时数据已经通过 reactive 更新了
-      }
-    );
+    if (enableMultiRound.value) {
+      // 多轮测试逻辑
+      await runMultiRoundTest();
+    } else {
+      // 单次批量测试逻辑
+      await startBatchTest(
+        selectedTestCaseObjects.value,
+        testMode.value,
+        getConfig(),
+        selectedTestSuite.value,
+        (current, total, result) => {
+          batchProgress.value = { current, total };
+          // 更新当前运行的测试
+          const testCase = getTestCaseById(result.testCaseId || result.id.split('-')[0] || '');
+          currentRunningTest.value = testCase?.name || '未知测试';
+        },
+        // 实时更新回调
+        (testId, data) => {
+          // activeTests 会自动更新，这里可以添加额外的逻辑
+          // 实时数据已经通过 reactive 更新了
+        }
+      );
+    }
 
     // 测试完成后清空当前运行测试
     currentRunningTest.value = '';
@@ -202,6 +229,87 @@ import TestProgressCard from './components/TestProgressCard.vue'
   /** 取消批量测试 */
   const handleCancelBatchTest = () => {
     cancelBatchTest();
+    isMultiRoundRunning.value = false;
+  };
+
+  /** 运行多轮测试 */
+  const runMultiRoundTest = async () => {
+    isMultiRoundRunning.value = true;
+    multiRoundResults.value = [];
+    // 清理之前的累计历史数据
+    accumulatedHistoryData.value.clear();
+
+    const totalTests = selectedTestCaseObjects.value.length;
+    const totalTestsAllRounds = totalTests * rounds.value;
+
+    multiRoundProgress.value = {
+      currentRound: 1,
+      totalRounds: rounds.value,
+      currentTest: 0,
+      totalTests: totalTestsAllRounds
+    };
+
+    try {
+      for (let round = 1; round <= rounds.value; round++) {
+        multiRoundProgress.value.currentRound = round;
+
+        // 运行单轮测试
+        const roundResults = await runSingleRound(round);
+        multiRoundResults.value.push({ round, results: roundResults });
+
+        // 累计历史数据用于图表显示
+        roundResults.forEach(result => {
+          const existingData = accumulatedHistoryData.value.get(result.testCaseId) || [];
+          const newHistoryData = result.chunks.map(chunk => ({
+            time: chunk.timestamp,
+            totalSpeed: result.tokensPerSecond,
+            currentSpeed: result.tokensPerSecond,
+            outputSpeed: result.outputSpeed || 0
+          }));
+
+          accumulatedHistoryData.value.set(result.testCaseId, [
+            ...existingData,
+            ...newHistoryData
+          ]);
+        });
+
+        // 如果不是最后一轮，等待间隔时间
+        if (round < rounds.value && interval.value > 0) {
+          await new Promise(resolve => setTimeout(resolve, interval.value * 1000));
+        }
+      }
+    } catch (error) {
+      console.error('Multi-round test error:', error);
+    } finally {
+      isMultiRoundRunning.value = false;
+    }
+  };
+
+  /** 运行单轮测试 */
+  const runSingleRound = async (round: number): Promise<TokenTestResult[]> => {
+    const roundResults: TokenTestResult[] = [];
+
+    await startBatchTest(
+      selectedTestCaseObjects.value,
+      testMode.value,
+      getConfig(),
+      `${selectedTestSuite.value}-round-${round}`,
+      (current, total, result) => {
+        multiRoundProgress.value.currentTest = (round - 1) * selectedTestCaseObjects.value.length + current;
+
+        // 更新当前运行的测试
+        const testCase = getTestCaseById(result.testCaseId || result.id.split('-')[0] || '');
+        currentRunningTest.value = `第${round}轮 - ${testCase?.name || '未知测试'}`;
+
+        roundResults.push(result);
+      },
+      // 实时更新回调
+      (testId, data) => {
+        // activeTests 会自动更新
+      }
+    );
+
+    return roundResults;
   };
 
   /** 测试套件变更 */
@@ -312,10 +420,16 @@ import TestProgressCard from './components/TestProgressCard.vue'
             :selected-test-cases="selectedTestCases"
             :selected-test-suite="selectedTestSuite"
             :test-mode="testMode"
-            :is-batch-loading="isBatchLoading"
+            :is-batch-loading="isBatchLoading || isMultiRoundRunning"
+            :enable-multi-round="enableMultiRound"
+            :rounds="rounds"
+            :interval="interval"
             @update:selected-test-cases="selectedTestCases = $event"
             @update:selected-test-suite="handleTestSuiteChange"
             @update:test-mode="testMode = $event"
+            @update:enable-multi-round="enableMultiRound = $event"
+            @update:rounds="rounds = $event"
+            @update:interval="interval = $event"
             @start-batch-test="handleStartBatchTest"
             @cancel-batch-test="handleCancelBatchTest"
             @select-all-test-cases="handleSelectAllTestCases"
@@ -329,7 +443,21 @@ import TestProgressCard from './components/TestProgressCard.vue'
           :current-batch-progress="currentBatchProgress"
           :realtime-test-progress="realtimeTestProgress"
           :test-mode="testMode"
+          :is-multi-round-running="isMultiRoundRunning"
+          :multi-round-progress="multiRoundProgress"
         />
+
+        <!-- 多轮测试总图表 -->
+        <div v-if="enableMultiRound && (isMultiRoundRunning || multiRoundResults.length > 0)" class="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
+          <h2 class="text-lg font-semibold text-gray-800 mb-4">多轮测试性能趋势</h2>
+          <div class="flex justify-center">
+            <MultiRoundChart
+              :multi-round-results="multiRoundResults"
+              :width="800"
+              :height="400"
+            />
+          </div>
+        </div>
 
         <!-- 批量测试错误提示 -->
         <div v-if="batchError" class="bg-red-50 border border-red-200 text-red-700 rounded-lg p-4">
@@ -337,7 +465,8 @@ import TestProgressCard from './components/TestProgressCard.vue'
         </div>
 
         <!-- 批量测试结果 - 使用TestProgressCard显示 -->
-        <div v-if="batchResults.length > 0" class="space-y-4">
+        <div v-if="batchResults.length > 0 || multiRoundResults.length > 0" class="space-y-4">
+          <!-- 普通批量测试结果 -->
           <div v-for="batch in batchResults" :key="batch.suiteId" class="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
             <div class="flex justify-between items-center mb-4">
               <h2 class="text-lg font-semibold text-gray-800">
@@ -351,6 +480,38 @@ import TestProgressCard from './components/TestProgressCard.vue'
             <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
               <TestProgressCard
                 v-for="result in batch.results"
+                :key="result.id"
+                :progress="{
+                  testId: result.id,
+                  testCaseId: result.testCaseId,
+                  testCaseName: result.testCaseName,
+                  status: result.status,
+                  tokens: result.tokens,
+                  actualTokens: result.actualTokens,
+                  totalSpeed: result.tokensPerSecond,
+                  currentSpeed: result.tokensPerSecond,
+                  outputSpeed: result.outputSpeed || 0,
+                  firstTokenTime: result.firstTokenTime,
+                  startTime: result.timestamp.getTime(),
+                  duration: result.duration,
+                  historyData: []
+                }"
+                :show-chart="false"
+              />
+            </div>
+          </div>
+
+          <!-- 多轮测试结果 -->
+          <div v-for="roundData in multiRoundResults" :key="roundData.round" class="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
+            <div class="flex justify-between items-center mb-4">
+              <h2 class="text-lg font-semibold text-gray-800">
+                {{ getTestSuiteById(selectedTestSuite)?.name || '测试' }} - 第{{ roundData.round }}轮结果
+              </h2>
+            </div>
+
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <TestProgressCard
+                v-for="result in roundData.results"
                 :key="result.id"
                 :progress="{
                   testId: result.id,

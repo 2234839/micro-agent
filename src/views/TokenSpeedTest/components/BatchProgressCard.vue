@@ -34,6 +34,13 @@
     };
     realtimeTestProgress: ProgressData[];
     testMode: TestMode;
+    isMultiRoundRunning?: boolean;
+    multiRoundProgress?: {
+      currentRound: number;
+      totalRounds: number;
+      currentTest: number;
+      totalTests: number;
+    };
   }
 
   defineProps<Props>();
@@ -42,7 +49,11 @@
 <template>
   <div v-if="isBatchLoading || realtimeTestProgress.length > 0" class="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
     <h2 class="text-lg font-semibold text-gray-800 mb-4">
-    {{ isBatchLoading ? '批量测试进度' : '测试结果详情' }}
+    {{
+      isMultiRoundRunning ?
+        `多轮测试进度 (第 ${multiRoundProgress?.currentRound || 1}/${multiRoundProgress?.totalRounds || 1} 轮)` :
+        (isBatchLoading ? '批量测试进度' : '测试结果详情')
+    }}
   </h2>
 
     <!-- 总体进度条 -->
@@ -50,11 +61,19 @@
       <div class="w-full bg-gray-200 rounded-full h-3">
         <div
           class="bg-green-600 h-3 rounded-full transition-all duration-300"
-          :style="{ width: `${currentBatchProgress.percentage}%` }">
+          :style="{
+            width: isMultiRoundRunning ?
+              `${Math.round((multiRoundProgress?.currentTest || 0) / (multiRoundProgress?.totalTests || 1) * 100)}%` :
+              `${currentBatchProgress.percentage}%`
+          }">
         </div>
       </div>
       <div class="text-center text-sm text-gray-600 mt-2">
-        {{ currentBatchProgress.percentage }}% 完成
+        {{
+          isMultiRoundRunning ?
+            `${Math.round((multiRoundProgress?.currentTest || 0) / (multiRoundProgress?.totalTests || 1) * 100)}% 完成 (${multiRoundProgress?.currentTest || 0}/${multiRoundProgress?.totalTests || 1})` :
+            `${currentBatchProgress.percentage}% 完成`
+        }}
       </div>
     </div>
 

@@ -12,12 +12,18 @@
     selectedTestSuite: string;
     testMode: TestMode;
     isBatchLoading: boolean;
+    enableMultiRound?: boolean;
+    rounds?: number;
+    interval?: number;
   }
 
   interface Emits {
     (e: 'update:selected-test-cases', ids: string[]): void;
     (e: 'update:selected-test-suite', id: string): void;
     (e: 'update:test-mode', mode: TestMode): void;
+    (e: 'update:enable-multi-round', enabled: boolean): void;
+    (e: 'update:rounds', rounds: number): void;
+    (e: 'update:interval', interval: number): void;
     (e: 'start-batch-test'): void;
     (e: 'cancel-batch-test'): void;
     (e: 'select-all-test-cases'): void;
@@ -98,6 +104,60 @@
         </p>
       </div>
 
+      <!-- 多轮测试配置 -->
+      <div>
+        <label class="block text-sm font-medium text-gray-700 mb-2">多轮测试设置</label>
+        <div class="space-y-3">
+          <!-- 启用多轮测试开关 -->
+          <div class="flex items-center justify-between">
+            <span class="text-sm text-gray-600">启用多轮测试</span>
+            <button
+              @click="$emit('update:enable-multi-round', !props.enableMultiRound)"
+              :class="[
+                'relative inline-flex h-6 w-11 items-center rounded-full transition-colors',
+                props.enableMultiRound ? 'bg-blue-600' : 'bg-gray-200'
+              ]">
+              <span
+                :class="[
+                  'inline-block h-4 w-4 transform rounded-full bg-white transition-transform',
+                  props.enableMultiRound ? 'translate-x-6' : 'translate-x-1'
+                ]" />
+            </button>
+          </div>
+
+          <!-- 多轮测试参数 -->
+          <div v-if="props.enableMultiRound" class="grid grid-cols-2 gap-3 pl-4 border-l-2 border-blue-200">
+            <div>
+              <label class="block text-xs text-gray-600 mb-1">轮次</label>
+              <input
+                type="number"
+                min="2"
+                max="50"
+                :value="props.rounds || 5"
+                @input="$emit('update:rounds', parseInt(($event.target as HTMLInputElement).value) || 5)"
+                class="w-full px-2 py-1 text-sm border border-gray-300 rounded focus:outline-none focus:ring-2 focus:ring-blue-500"
+              />
+            </div>
+            <div>
+              <label class="block text-xs text-gray-600 mb-1">间隔(秒)</label>
+              <input
+                type="number"
+                min="0"
+                max="300"
+                step="0.5"
+                :value="props.interval || 2"
+                @input="$emit('update:interval', parseFloat(($event.target as HTMLInputElement).value) || 2)"
+                class="w-full px-2 py-1 text-sm border border-gray-300 rounded focus:outline-none focus:ring-2 focus:ring-blue-500"
+              />
+            </div>
+          </div>
+
+          <p v-if="props.enableMultiRound" class="text-xs text-gray-500">
+            将自动运行 {{ props.rounds || 5 }} 轮测试，每轮间隔 {{ props.interval || 2 }} 秒
+          </p>
+        </div>
+      </div>
+
       <!-- 开始批量测试按钮 -->
       <div class="flex gap-2">
         <BaseButton
@@ -105,7 +165,11 @@
           @click="$emit('start-batch-test')"
           :disabled="isBatchLoading || selectedTestCaseObjects.length === 0"
           class="flex-1">
-          {{ isBatchLoading ? '测试中...' : `开始批量测试 (${selectedTestCaseObjects.length} 个)` }}
+          {{ isBatchLoading ? '测试中...' :
+     props.enableMultiRound ?
+       `开始多轮测试 (${selectedTestCaseObjects.length} 个 × ${props.rounds || 5} 轮)` :
+       `开始批量测试 (${selectedTestCaseObjects.length} 个)`
+   }}
         </BaseButton>
         <BaseButton
           v-if="isBatchLoading"
