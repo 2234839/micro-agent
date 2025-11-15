@@ -2,7 +2,7 @@ import { createRouter, createWebHistory } from 'vue-router'
 import Home from '../views/Home.vue'
 import ComponentDemo from '../views/ComponentDemo.vue'
 import MicroAgentTest from '../views/MicroAgentTest.vue'
-import TokenSpeedTest from '../views/TokenSpeedTest.vue'
+import TokenSpeedTest from '../views/TokenSpeedTest/index.vue'
 import LayoutView from '../views/LayoutView.vue'
 
 /**
