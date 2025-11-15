@@ -3,7 +3,6 @@ import { EnvConfigService } from './agent/config/env-config';
 import { OpenAIConfigService } from './agent/config/openai-config';
 import { MicroAgentService, type ApiChatMessage } from './agent/micro-agent';
 import { OpenAIClientService } from './agent/services/openai-client';
-import { StreamingChatService } from './agent/services/streaming-chat';
 
 /**
  * MicroAgent 实时流式输出示例
@@ -27,9 +26,9 @@ const microAgentStreamingExample = Effect.gen(function* () {
   });
 
   // 实时流式输出
-  yield* Stream.runForEach(stream, (response) => {
-    // console.log(response.content);
-    process.stdout.write(response.content);
+  yield* Stream.runForEach(stream, (chunk) => {
+    const content = chunk.choices[0]?.delta?.content || '';
+    process.stdout.write(content);
     return Effect.void;
   });
 });
@@ -44,7 +43,6 @@ const program = Effect.gen(function* () {
 /** 组合所有需要的 Layer */
 const AppLive = Layer.mergeAll(
   MicroAgentService.Default,
-  StreamingChatService.Default,
   OpenAIClientService.Default,
   OpenAIConfigService.Default,
   EnvConfigService.Default,

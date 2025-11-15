@@ -3,7 +3,7 @@
   import { useRouter } from 'vue-router';
   import BaseButton from '../components/BaseButton.vue';
   import { MicroAgentService, type AgentStepChunk } from '../agent/micro-agent';
-  import type { StreamChunk } from '../agent/services/streaming-chat';
+  import type { ChatCompletionChunk } from 'openai/resources/chat/completions';
   import { Effect, Stream, Layer } from 'effect';
   import { OpenAIConfigService } from '../agent/config/openai-config';
   import { EnvConfigService } from '../agent/config/env-config';
@@ -21,6 +21,9 @@
 
   /** 工具调用展开状态管理 */
   const toolCallExpanded = ref<Record<string, boolean>>({});
+
+  /** 错误信息展开状态管理 */
+  const errorExpanded = ref<Record<string, boolean>>({});
 
   /** 对话消息列表 */
   const messages = reactive<
@@ -206,18 +209,9 @@
                   currentStepData.aiOutput += chunk.content;
                 }
 
-                // 处理工具调用（排除finish工具，或者只显示finish工具的结果）
-                if (chunk.toolCall && chunk.toolCall.name) {
-                  if (chunk.toolCall.name !== 'finish') {
-                    // 非finish工具，完整显示
-                    currentStepData.toolCall = chunk.toolCall;
-                  } else {
-                    // finish工具，只显示结果，隐藏参数
-                    currentStepData.toolCall = {
-                      ...chunk.toolCall,
-                      parameters: {} // 清空参数
-                    };
-                  }
+                // 处理工具调用（显示所有工具的参数，但finish工具的参数会在后续处理中被隐藏）
+                if (chunk.toolCall) {
+                  currentStepData.toolCall = chunk.toolCall;
                 } else if (!chunk.toolCall) {
                   // 如果没有工具调用，确保不保留旧的工具调用数据
                   delete currentStepData.toolCall;
@@ -292,17 +286,14 @@
             temperature: 0.7,
           });
 
-          yield* Stream.runForEach(stream, (chunk: StreamChunk) => {
-            if (chunk.error) {
-              throw new Error(chunk.error);
-            }
-
+          yield* Stream.runForEach(stream, (chunk: ChatCompletionChunk) => {
             // 直接处理每个 chunk，立即显示
-            if (chunk.content) {
+            const content = chunk.choices[0]?.delta?.content || '';
+            if (content) {
               const lastMessage = messages[messages.length - 1];
               if (lastMessage && lastMessage.type === 'ai') {
                 // 累积并立即更新显示
-                lastMessage.content += chunk.content;
+                lastMessage.content += content;
                 scrollToBottom();
               }
             }
@@ -331,6 +322,18 @@
   const isToolCallExpanded = (stepIndex: number) => {
     const key = `step-${stepIndex}`;
     return toolCallExpanded.value[key] || false;
+  };
+
+  /** 切换错误信息展开状态 */
+  const toggleError = (stepIndex: number) => {
+    const key = `error-${stepIndex}`;
+    errorExpanded.value[key] = !errorExpanded.value[key];
+  };
+
+  /** 检查错误信息是否展开 */
+  const isErrorExpanded = (stepIndex: number) => {
+    const key = `error-${stepIndex}`;
+    return errorExpanded.value[key] || false;
   };
 
   /** 处理回车发送 */
@@ -538,7 +541,7 @@
                         class="mt-2 space-y-2 pl-2 border-l-2 border-gray-200">
                         <!-- 工具参数 -->
                         <div
-                          v-if="Object.keys(step.toolCall.parameters).length > 0"
+                          v-if="Object.keys(step.toolCall.parameters).length > 0 && step.toolCall.name !== 'finish'"
                           class="space-y-1">
                           <div class="text-sm font-medium text-gray-600">参数:</div>
                           <div class="bg-gray-50 rounded p-2 max-h-32 overflow-y-auto">
@@ -567,9 +570,25 @@
 
                     <!-- 错误信息 -->
                     <div v-if="step.error" class="error-block">
-                      <div class="bg-red-50 border border-red-200 rounded p-3 text-sm text-red-700">
-                        <div class="font-medium text-red-800 mb-1">❌ 错误:</div>
-                        <div>{{ step.error }}</div>
+                      <div
+                        class="flex items-center gap-2 cursor-pointer hover:bg-red-50 p-2 rounded transition-colors"
+                        @click="toggleError(stepIndex)">
+                        <span class="text-sm font-medium text-red-700">❌ 错误信息:</span>
+                        <div class="ml-auto flex items-center gap-1">
+                          <svg
+                            class="w-4 h-4 text-red-400 transition-transform"
+                            :class="{ 'rotate-90': isErrorExpanded(stepIndex) }"
+                            fill="none"
+                            stroke="currentColor"
+                            viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7" />
+                          </svg>
+                        </div>
+                      </div>
+                      <div v-show="isErrorExpanded(stepIndex)" class="mt-1 pl-2">
+                        <div class="bg-red-50 border border-red-200 rounded p-3 text-sm text-red-700">
+                          <div>{{ step.error }}</div>
+                        </div>
                       </div>
                     </div>
                   </template>

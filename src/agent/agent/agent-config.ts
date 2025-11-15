@@ -86,14 +86,14 @@ export const DEVELOPER_SYSTEM_PROMPT = `你是一个开发者模式的 AI Agent�
 /** 默认 Agent 配置 */
 export const DEFAULT_AGENT_CONFIG: AgentConfig = {
   systemPrompt: DEFAULT_SYSTEM_PROMPT,
-  maxSteps: 10,
+  maxSteps: 99,
   temperature: 0.7,
 };
 
 /** 简化版 Agent 配置 */
 export const SIMPLE_AGENT_CONFIG: AgentConfig = {
   systemPrompt: SIMPLE_SYSTEM_PROMPT,
-  maxSteps: 5,
+  maxSteps: 99,
   temperature: 0.5,
 };
 

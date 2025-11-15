@@ -3,7 +3,6 @@ import type { ChatCompletionMessageParam } from 'openai/resources/chat/completio
 import { DEFAULT_AGENT_CONFIG, SIMPLE_AGENT_CONFIG } from './agent/agent-config';
 import { defaultTools } from './agent/agent-tools';
 import { OpenAIClientService } from './services/openai-client';
-import { StreamingChatService } from './services/streaming-chat';
 import type { AgentTool } from './agent/agent-types';
 
 /** UI聊天消息接口 */
@@ -57,9 +56,8 @@ export interface AgentStepChunk {
 
 /** Micro Agent 服务 */
 export class MicroAgentService extends Effect.Service<MicroAgentService>()('MicroAgentService', {
-  dependencies: [StreamingChatService.Default, OpenAIClientService.Default],
+  dependencies: [OpenAIClientService.Default],
   effect: Effect.gen(function* () {
-    const streamingService = yield* StreamingChatService;
     const openAIClient = yield* OpenAIClientService;
 
     /** 将工具转换为 OpenAI 格式 */
@@ -94,13 +92,12 @@ export class MicroAgentService extends Effect.Service<MicroAgentService>()('Micr
           }));
 
           // 创建流式对话
-          const stream = yield* streamingService.createStreamingChat(openaiMessages, {
+          const stream = yield* openAIClient.createStreamChatCompletion(openaiMessages, {
             temperature: options?.temperature,
             maxTokens: options?.maxTokens,
-            reasoningEffort: options?.enableReasoning ? 'medium' : undefined,
+            enableReasoning: options?.enableReasoning,
           });
 
-          // 直接返回 StreamChunk 流，接口更简洁
           return stream;
         }),
 
@@ -191,63 +188,85 @@ export class MicroAgentService extends Effect.Service<MicroAgentService>()('Micr
                 );
 
                 let assistantContent = '';
-                const toolCallMap = new Map<number, any>();
+                const toolCallMap = new Map<number, {
+                  id?: string;
+                  type?: string;
+                  function: {
+                    name: string;
+                    arguments: string;
+                  };
+                }>();
 
                 // 收集流式响应
-                for await (const chunk of response) {
-                  const delta = chunk.choices[0]?.delta;
-                  if (delta?.content) {
-                    assistantContent += delta.content;
-                    // 实时输出增量思考内容给用户（流式）
-                    yield {
-                      content: delta.content, // 输出增量内容，不是累积内容
-                      step,
-                      isDone: false,
-                      timestamp: Date.now(),
-                    } as AgentStepChunk;
-                  }
-                  if (delta?.tool_calls) {
-                    console.log('🔧 [AGENT DEBUG] 工具调用决策:', {
-                      工具数量: delta.tool_calls.length,
-                      工具详情: delta.tool_calls.map((tc) => ({
-                        名称: tc.function?.name || 'unknown',
-                        参数预览: tc.function?.arguments
-                          ? tc.function.arguments.slice(0, 100) +
-                            (tc.function.arguments.length > 100 ? '...' : '')
-                          : 'none',
-                      })),
-                    });
-                    // 处理流式工具调用数据
-                    for (const toolCallDelta of delta.tool_calls) {
-                      const index = toolCallDelta.index;
-                      if (!toolCallMap.has(index)) {
-                        toolCallMap.set(index, {
-                          id: toolCallDelta.id,
-                          type: toolCallDelta.type || 'function',
-                          function: {
-                            name: '',
-                            arguments: '',
-                          },
-                        });
-                      }
+                const collectStreamEffect = Stream.runForEach(response, (chunk) => {
+                  return Effect.sync(() => {
+                    const delta = chunk.choices[0]?.delta;
+                    if (delta?.content) {
+                      assistantContent += delta.content;
+                      // 实时输出增量思考内容给用户（流式）
+                      const result = {
+                        content: delta.content, // 输出增量内容，不是累积内容
+                        step,
+                        isDone: false,
+                        timestamp: Date.now(),
+                      } as AgentStepChunk;
 
-                      const toolCall = toolCallMap.get(index);
-                      if (toolCallDelta.function?.name) {
-                        toolCall.function.name += toolCallDelta.function.name;
-                      }
-                      if (toolCallDelta.function?.arguments) {
-                        toolCall.function.arguments += toolCallDelta.function.arguments;
+                      // 将结果添加到队列
+                      results.push(result);
+                    }
+                    if (delta?.tool_calls) {
+                      console.log('🔧 [AGENT DEBUG] 工具调用决策:', {
+                        工具数量: delta.tool_calls.length,
+                        工具详情: delta.tool_calls.map((tc) => ({
+                          名称: tc.function?.name || 'unknown',
+                          参数预览: tc.function?.arguments
+                            ? tc.function.arguments.slice(0, 100) +
+                              (tc.function.arguments.length > 100 ? '...' : '')
+                            : 'none',
+                        })),
+                      });
+                      // 处理流式工具调用数据
+                      for (const toolCallDelta of delta.tool_calls) {
+                        const index = toolCallDelta.index;
+                        if (!toolCallMap.has(index)) {
+                          toolCallMap.set(index, {
+                            id: toolCallDelta.id,
+                            type: toolCallDelta.type || 'function',
+                            function: {
+                              name: '',
+                              arguments: '',
+                            },
+                          });
+                        }
+
+                        const toolCall = toolCallMap.get(index);
+                        if (toolCall) {
+                          if (toolCallDelta.function?.name) {
+                            toolCall.function.name += toolCallDelta.function.name;
+                          }
+                          if (toolCallDelta.function?.arguments) {
+                            toolCall.function.arguments += toolCallDelta.function.arguments;
+                          }
+                        }
                       }
                     }
-                  }
-                  if (chunk.choices[0]?.finish_reason) {
-                    console.log(`🏁 [AGENT DEBUG] 第${step}步 - API响应结束`, {
-                      结束原因: chunk.choices[0]?.finish_reason,
-                      总思考长度: assistantContent.length,
-                      工具调用数量: toolCallMap.size,
-                    });
-                    break;
-                  }
+                    if (chunk.choices[0]?.finish_reason) {
+                      console.log(`🏁 [AGENT DEBUG] 第${step}步 - API响应结束`, {
+                        结束原因: chunk.choices[0]?.finish_reason,
+                        总思考长度: assistantContent.length,
+                        工具调用数量: toolCallMap.size,
+                      });
+                    }
+                  });
+                });
+
+                // 创建临时数组来收集结果
+                const results: AgentStepChunk[] = [];
+                await Effect.runPromise(collectStreamEffect);
+
+                // 输出收集到的结果
+                for (const result of results) {
+                  yield result;
                 }
 
                 // 思考完成后，一次性输出完整的思考内容日志
@@ -294,8 +313,8 @@ export class MicroAgentService extends Effect.Service<MicroAgentService>()('Micr
                 // 只有在有工具调用时才添加 tool_calls 字段
                 if (assistantMessage.tool_calls && assistantMessage.tool_calls.length > 0) {
                   assistantMessageForHistory.tool_calls = assistantMessage.tool_calls.map((tc) => ({
-                    id: tc.id,
-                    type: tc.type,
+                    id: tc.id || `tool_${step}_${Date.now()}`,
+                    type: (tc.type || 'function') as 'function',
                     function: {
                       name: tc.function.name,
                       arguments: tc.function.arguments,
@@ -321,7 +340,6 @@ export class MicroAgentService extends Effect.Service<MicroAgentService>()('Micr
                         success: false,
                         error: `不支持的工具类型: ${toolCall.type || 'unknown'}`,
                         toolName: toolCall.type || 'unknown',
-                        parameters: {},
                       };
 
                       messages.push({
@@ -370,13 +388,26 @@ export class MicroAgentService extends Effect.Service<MicroAgentService>()('Micr
                     // 执行工具
                     const tool = tools.find((t: any) => t.name === toolName);
                     if (!tool) {
+                      const notFoundResult = {
+                        success: false,
+                        error: `未找到工具: ${toolName}`,
+                        toolName,
+                      };
+
+                      // 添加错误结果到消息历史
+                      messages.push({
+                        role: 'tool',
+                        content: JSON.stringify(notFoundResult),
+                        tool_call_id: toolCall.id || `tool_${step}_${Date.now()}`,
+                      });
+
                       yield {
                         content: '',
                         step,
                         toolCall: {
                           name: toolName,
                           parameters,
-                          result: { success: false, error: `未找到工具: ${toolName}` }
+                          result: notFoundResult,
                         },
                         isDone: false,
                         error: `未找到工具: ${toolName}`,
@@ -401,12 +432,11 @@ export class MicroAgentService extends Effect.Service<MicroAgentService>()('Micr
                           (JSON.stringify(toolResult).length > 200 ? '...' : ''),
                       });
 
-                      // 为成功结果添加成功标识
+                      // 为成功结果添加成功标识（移除重复的parameters，因为已经在toolCall.parameters中显示）
                       const successResult = {
                         success: true,
                         data: toolResult,
                         toolName,
-                        parameters,
                       };
 
                       // 将标准化结果添加到消息
@@ -437,7 +467,6 @@ export class MicroAgentService extends Effect.Service<MicroAgentService>()('Micr
                               success: true,
                               data: toolResult,
                               toolName,
-                              parameters,
                             },
                           },
                           isDone: true,
@@ -471,7 +500,6 @@ export class MicroAgentService extends Effect.Service<MicroAgentService>()('Micr
                         success: false,
                         error: errorMessage,
                         toolName,
-                        parameters,
                       };
 
                       // 将错误结果添加到消息历史，让AI能够看到错误信息
