@@ -8,14 +8,18 @@
     testCaseId: string;
     testCaseName: string;
     status: 'running' | 'completed' | 'error';
-    tokens: number;
+    tokens: number; // 估算的 token 数
+    actualTokens?: {
+      promptTokens?: number;
+      completionTokens?: number;
+      totalTokens?: number;
+    }; // API返回的实际token数量
     totalSpeed: number;
     currentSpeed: number;
     outputSpeed: number;
     firstTokenTime?: number;
     startTime: number;
-    elapsedTime: number;
-    actualDuration: number; // 实际测试持续时间，未完成时为当前运行时间
+    duration: number; // 总耗时（毫秒），与BatchResults保持一致
     // 添加历史数据
     historyData: Array<{
       time: number;
@@ -85,7 +89,7 @@
         <div class="flex-1 min-w-0">
           <div class="font-medium text-gray-900 truncate">{{ progress.testCaseName }}</div>
           <div class="text-xs text-gray-500">
-            运行时间: {{ formatTime(progress.actualDuration) }}
+            运行时间: {{ formatTime(progress.duration) }}
           </div>
         </div>
         <span
@@ -115,26 +119,39 @@
       <div class="grid grid-cols-3 gap-3 text-center">
         <!-- Token 数量 -->
         <div class="space-y-1">
-          <div class="text-xl font-bold text-blue-600">
-            {{ progress.tokens.toLocaleString() }}
+          <div
+            :class="[
+              'text-xl font-bold transition-colors',
+              progress.status === 'running' ? 'text-yellow-600' :
+              progress.status === 'completed' ?
+                (progress.actualTokens?.totalTokens ? 'text-green-600' : 'text-yellow-600') :
+              'text-red-600'
+            ]"
+            :title="progress.status === 'running' ?
+              '运行中的token数量为预估值，可能不准确' :
+              progress.status === 'completed' ?
+                (progress.actualTokens?.totalTokens ? '测试完成，为实际接口返回的token数量' : '测试完成，但无接口返回的实际token数据，使用估算值') :
+              '测试失败，token数量可能不完整'"
+          >
+            {{ (progress.actualTokens?.totalTokens || progress.tokens).toLocaleString() }}
           </div>
           <div class="text-xs text-gray-600">Tokens</div>
         </div>
 
-        <!-- 平均速度 -->
-        <div class="space-y-1">
-          <div class="text-xl font-bold text-purple-600">
-            {{ formatSpeed(progress.totalSpeed) }}
-          </div>
-          <div class="text-xs text-gray-600">平均速度</div>
-        </div>
-
-        <!-- 首次响应时间 -->
+        <!-- 总速度 -->
         <div class="space-y-1">
           <div class="text-xl font-bold text-green-600">
-            {{ progress.firstTokenTime ? Math.round(progress.firstTokenTime) + 'ms' : '-' }}
+            {{ formatSpeed(progress.totalSpeed) }}
           </div>
-          <div class="text-xs text-gray-600">首次响应</div>
+          <div class="text-xs text-gray-600">总速度</div>
+        </div>
+
+        <!-- 输出速度 -->
+        <div class="space-y-1">
+          <div class="text-xl font-bold text-purple-600">
+            {{ formatSpeed(progress.outputSpeed) }}
+          </div>
+          <div class="text-xs text-gray-600">输出速度</div>
         </div>
       </div>
 
@@ -144,15 +161,15 @@
         <div class="flex justify-between items-center">
           <span class="text-xs text-gray-500">总耗时</span>
           <span class="text-xs font-medium text-gray-900">
-            {{ formatTime(progress.elapsedTime) }}
+            {{ formatTime(progress.duration) }}
           </span>
         </div>
 
-        <!-- 输出速度 -->
+        <!-- 首次响应时间 -->
         <div class="flex justify-between items-center">
-          <span class="text-xs text-gray-500">输出速度</span>
+          <span class="text-xs text-gray-500">首次响应</span>
           <span class="text-xs font-medium text-gray-900">
-            {{ formatSpeed(progress.outputSpeed) }}
+            {{ progress.firstTokenTime ? Math.round(progress.firstTokenTime) + 'ms' : '-' }}
           </span>
         </div>
       </div>

@@ -82,23 +82,33 @@ export function useTokenSpeedTest() {
   const currentBatchTest = ref<BatchTestResult | null>(null);
 
   /** 实时测试状态跟踪 */
-  const activeTests = ref<Map<string, {
-    testCaseId: string;
-    testCaseName: string; // 直接存储测试用例名称
-    status: 'running' | 'completed' | 'error';
-    tokens: number;
-    speed: number;
-    firstTokenTime?: number;
-    startTime: number;
-    currentSpeed: number;
-    actualDuration: number; // 实际测试持续时间，未完成时为当前运行时间
-    historyData: Array<{
-      time: number;
-      totalSpeed: number;
-      currentSpeed: number;
-      outputSpeed: number;
-    }>;
-  }>>(new Map());
+  const activeTests = ref<
+    Map<
+      string,
+      {
+        testCaseId: string;
+        testCaseName: string; // 直接存储测试用例名称
+        status: 'running' | 'completed' | 'error';
+        tokens: number; // 估算的 token 数
+        actualTokens?: {
+          promptTokens?: number;
+          completionTokens?: number;
+          totalTokens?: number;
+        }; // API返回的实际token数量
+        speed: number;
+        firstTokenTime?: number;
+        startTime: number;
+        currentSpeed: number;
+        actualDuration: number; // 实际测试持续时间，未完成时为当前运行时间
+        historyData: Array<{
+          time: number;
+          totalSpeed: number;
+          currentSpeed: number;
+          outputSpeed: number;
+        }>;
+      }
+    >
+  >(new Map());
 
   /** 实时数据 */
   const currentTokens = ref(0);
@@ -107,14 +117,19 @@ export function useTokenSpeedTest() {
   const currentTestStartTime = ref(0);
 
   /** 使用 VueUse 的 useIntervalFn 创建速度更新定时器 */
-  const { pause: pauseSpeedUpdate, resume: resumeSpeedUpdate } = useIntervalFn(() => {
-    if (currentTestStartTime.value > 0) {
-      currentElapsedTime.value = Date.now() - currentTestStartTime.value;
-      if (currentTokens.value > 0 && currentElapsedTime.value > 0) {
-        currentSpeed.value = Math.round((currentTokens.value * 1000) / currentElapsedTime.value * 10) / 10;
+  const { pause: pauseSpeedUpdate, resume: resumeSpeedUpdate } = useIntervalFn(
+    () => {
+      if (currentTestStartTime.value > 0) {
+        currentElapsedTime.value = Date.now() - currentTestStartTime.value;
+        if (currentTokens.value > 0 && currentElapsedTime.value > 0) {
+          currentSpeed.value =
+            Math.round(((currentTokens.value * 1000) / currentElapsedTime.value) * 10) / 10;
+        }
       }
-    }
-  }, 100, { immediate: false });
+    },
+    100,
+    { immediate: false },
+  );
 
   /**
    * 计算字符数（简单估算为token数）
@@ -124,7 +139,11 @@ export function useTokenSpeedTest() {
   const estimateTokenCount = (text: string): number => {
     // 简单的token估算：中文字符1个token，英文单词平均1.3个token
     const chineseChars = (text.match(/[\u4e00-\u9fff]/g) || []).length;
-    const englishWords = text.replace(/[\u4e00-\u9fff]/g, '').trim().split(/\s+/).filter(word => word.length > 0).length;
+    const englishWords = text
+      .replace(/[\u4e00-\u9fff]/g, '')
+      .trim()
+      .split(/\s+/)
+      .filter((word) => word.length > 0).length;
     return Math.ceil(chineseChars + englishWords * 1.3);
   };
 
@@ -137,7 +156,7 @@ export function useTokenSpeedTest() {
   const startTokenSpeedTest = async (
     message: string,
     config: TokenTestConfig,
-    options: TokenTestOptions = {}
+    options: TokenTestOptions = {},
   ): Promise<void> => {
     if (!message.trim() || isLoading.value) {
       return;
@@ -190,7 +209,7 @@ export function useTokenSpeedTest() {
       );
 
       const apiMessages: Array<{ role: 'user'; content: string }> = [
-        { role: 'user', content: message.trim() }
+        { role: 'user', content: message.trim() },
       ];
 
       const chatProgram = Effect.gen(function* () {
@@ -211,6 +230,7 @@ export function useTokenSpeedTest() {
 
             // 处理 usage 数据（通常在最后一个 chunk 中）
             if (chunk.usage) {
+
               newTest.actualTokens = {
                 promptTokens: chunk.usage.prompt_tokens,
                 completionTokens: chunk.usage.completion_tokens,
@@ -225,7 +245,9 @@ export function useTokenSpeedTest() {
                 const currentDuration = Date.now() - startTime;
                 newTest.duration = currentDuration;
                 if (chunk.usage.completion_tokens > 0 && currentDuration > 0) {
-                  newTest.tokensPerSecond = Math.round((chunk.usage.completion_tokens * 1000) / currentDuration * 10) / 10;
+                  newTest.tokensPerSecond =
+                    Math.round(((chunk.usage.completion_tokens * 1000) / currentDuration) * 10) /
+                    10;
                 }
               }
             }
@@ -259,7 +281,8 @@ export function useTokenSpeedTest() {
                 const currentDuration = Date.now() - startTime;
                 newTest.duration = currentDuration;
                 if (totalTokens > 0 && currentDuration > 0) {
-                  newTest.tokensPerSecond = Math.round((totalTokens * 1000) / currentDuration * 10) / 10;
+                  newTest.tokensPerSecond =
+                    Math.round(((totalTokens * 1000) / currentDuration) * 10) / 10;
                 }
               } else {
                 // 即使有准确 token 数据，也记录 chunk 内容用于分析
@@ -286,15 +309,20 @@ export function useTokenSpeedTest() {
       newTest.duration = totalDuration;
       newTest.tokens = finalTokens;
 
-      // 计算总速度（包括首次响应时间）
-      newTest.tokensPerSecond = finalTokens > 0 ? Math.round((finalTokens * 1000) / totalDuration * 10) / 10 : 0;
+      // 计算总速度（包括首次响应时间）- 使用completionTokens，因为总速度指的也是输出速度
+      const outputTokensForSpeed = newTest.actualTokens?.completionTokens || finalTokens;
+      newTest.tokensPerSecond =
+        outputTokensForSpeed > 0
+          ? Math.round(((outputTokensForSpeed * 1000) / totalDuration) * 10) / 10
+          : 0;
 
-      // 计算纯输出速度（不包括首次响应时间）
-      if (newTest.firstTokenTime && finalTokens > 0) {
+      // 计算纯输出速度（不包括首次响应时间）- 优先使用API返回的completionTokens
+      const outputTokens = newTest.actualTokens?.completionTokens || finalTokens;
+      if (newTest.firstTokenTime && outputTokens > 0) {
         const outputDuration = totalDuration - newTest.firstTokenTime;
-        newTest.outputSpeed = outputDuration > 0 ? Math.round((finalTokens * 1000) / outputDuration * 10) / 10 : 0;
+        newTest.outputSpeed =
+          outputDuration > 0 ? Math.round(((outputTokens * 1000) / outputDuration) * 10) / 10 : 0;
       }
-
     } catch (err) {
       console.error('Token speed test error:', err);
       error.value = err instanceof Error ? err.message : '测试失败';
@@ -330,12 +358,15 @@ export function useTokenSpeedTest() {
   const runSingleTest = async (
     testCase: TestCase,
     config: TokenTestConfig,
-    onRealTimeUpdate?: (testId: string, data: {
-      tokens: number;
-      speed: number;
-      firstTokenTime?: number;
-      status?: 'running' | 'completed' | 'error';
-    }) => void
+    onRealTimeUpdate?: (
+      testId: string,
+      data: {
+        tokens: number;
+        speed: number;
+        firstTokenTime?: number;
+        status?: 'running' | 'completed' | 'error';
+      },
+    ) => void,
   ): Promise<TokenTestResult> => {
     const testId = `${testCase.id}-${Date.now()}`;
     const startTime = Date.now();
@@ -345,7 +376,14 @@ export function useTokenSpeedTest() {
       testCaseId: testCase.id,
       testCaseName: testCase.name, // 直接存储测试用例名称
       status: 'running' as 'running' | 'completed' | 'error',
-      tokens: 0,
+      tokens: 0, // 估算的 token 数
+      actualTokens: undefined as
+        | {
+            promptTokens?: number;
+            completionTokens?: number;
+            totalTokens?: number;
+          }
+        | undefined, // API返回的实际token数量
       speed: 0,
       firstTokenTime: undefined as number | undefined,
       startTime,
@@ -389,7 +427,7 @@ export function useTokenSpeedTest() {
       );
 
       const apiMessages: Array<{ role: 'user'; content: string }> = [
-        { role: 'user', content: testCase.prompt.trim() }
+        { role: 'user', content: testCase.prompt.trim() },
       ];
 
       const chatProgram = Effect.gen(function* () {
@@ -408,6 +446,7 @@ export function useTokenSpeedTest() {
             const currentTime = Date.now() - startTime;
 
             if (chunk.usage) {
+              console.log('[chunk]',chunk);
               testResult.actualTokens = {
                 promptTokens: chunk.usage.prompt_tokens,
                 completionTokens: chunk.usage.completion_tokens,
@@ -454,7 +493,8 @@ export function useTokenSpeedTest() {
 
               // 计算实时速度 - 使用 reactive 自动响应
               if (realtimeData.tokens > 0 && currentTime > 0) {
-                const instantSpeed = Math.round((realtimeData.tokens * 1000) / currentTime * 10) / 10;
+                const instantSpeed =
+                  Math.round(((realtimeData.tokens * 1000) / currentTime) * 10) / 10;
                 realtimeData.currentSpeed = instantSpeed;
                 realtimeData.speed = instantSpeed;
               } else if (currentTime > 0) {
@@ -465,21 +505,29 @@ export function useTokenSpeedTest() {
 
               // 节流的实时更新回调
               const now = Date.now();
-              if (onRealTimeUpdate && (now - lastUpdateTime) >= UPDATE_INTERVAL_MS) {
+              if (onRealTimeUpdate && now - lastUpdateTime >= UPDATE_INTERVAL_MS) {
                 lastUpdateTime = now;
 
-                // 计算当前时间点的各项速度数据
+                // 计算当前时间点的各项速度数据 - 使用completionTokens，因为总速度指的也是输出速度
                 const currentDuration = now - startTime;
-                const totalSpeed = currentDuration > 0 ? (realtimeData.tokens * 1000) / currentDuration : 0;
-                const outputDuration = realtimeData.firstTokenTime ? (currentDuration - realtimeData.firstTokenTime) : 0;
-                const outputSpeed = outputDuration > 0 && realtimeData.tokens > 0 ? (realtimeData.tokens * 1000) / outputDuration : 0;
+                const outputTokens =
+                  realtimeData.actualTokens?.completionTokens || realtimeData.tokens;
+                const totalSpeed =
+                  currentDuration > 0 ? (outputTokens * 1000) / currentDuration : 0;
+                const outputDuration = realtimeData.firstTokenTime
+                  ? currentDuration - realtimeData.firstTokenTime
+                  : 0;
+                const outputSpeed =
+                  outputDuration > 0 && outputTokens > 0
+                    ? (outputTokens * 1000) / outputDuration
+                    : 0;
 
                 // 添加历史数据点
                 const historyPoint = {
                   time: currentDuration,
                   totalSpeed,
                   currentSpeed: realtimeData.speed,
-                  outputSpeed
+                  outputSpeed,
                 };
                 realtimeData.historyData.push(historyPoint);
 
@@ -487,7 +535,7 @@ export function useTokenSpeedTest() {
                   tokens: realtimeData.tokens,
                   speed: realtimeData.speed,
                   firstTokenTime: realtimeData.firstTokenTime,
-                  status: 'running'
+                  status: 'running',
                 });
               }
             }
@@ -507,12 +555,14 @@ export function useTokenSpeedTest() {
       testResult.tokens = finalTokens;
 
       // 计算总速度（包括首次响应时间）
-      testResult.tokensPerSecond = finalTokens > 0 ? Math.round((finalTokens * 1000) / totalDuration * 10) / 10 : 0;
+      testResult.tokensPerSecond =
+        finalTokens > 0 ? Math.round(((finalTokens * 1000) / totalDuration) * 10) / 10 : 0;
 
       // 计算纯输出速度（不包括首次响应时间）
       if (testResult.firstTokenTime && finalTokens > 0) {
         const outputDuration = totalDuration - testResult.firstTokenTime;
-        testResult.outputSpeed = outputDuration > 0 ? Math.round((finalTokens * 1000) / outputDuration * 10) / 10 : 0;
+        testResult.outputSpeed =
+          outputDuration > 0 ? Math.round(((finalTokens * 1000) / outputDuration) * 10) / 10 : 0;
       }
 
       // 更新实时状态为完成，记录实际的结束时间和持续时间
@@ -527,7 +577,7 @@ export function useTokenSpeedTest() {
         time: totalDuration, // 使用总持续时间作为最终时间点
         totalSpeed: testResult.tokensPerSecond,
         currentSpeed: testResult.tokensPerSecond,
-        outputSpeed: testResult.outputSpeed || 0
+        outputSpeed: testResult.outputSpeed || 0,
       };
       realtimeData.historyData.push(finalHistoryPoint);
 
@@ -541,12 +591,11 @@ export function useTokenSpeedTest() {
           tokens: realtimeData.tokens,
           speed: realtimeData.speed,
           firstTokenTime: realtimeData.firstTokenTime,
-          status: 'completed'
+          status: 'completed',
         });
       }
 
       return testResult;
-
     } catch (err) {
       console.error('Single test error:', err);
       testResult.status = 'error';
@@ -565,7 +614,7 @@ export function useTokenSpeedTest() {
         time: errorDuration,
         totalSpeed: realtimeData.speed,
         currentSpeed: realtimeData.currentSpeed,
-        outputSpeed: 0
+        outputSpeed: 0,
       };
       realtimeData.historyData.push(errorHistoryPoint);
 
@@ -579,7 +628,7 @@ export function useTokenSpeedTest() {
           tokens: realtimeData.tokens,
           speed: realtimeData.speed,
           firstTokenTime: realtimeData.firstTokenTime,
-          status: 'error'
+          status: 'error',
         });
       }
 
@@ -605,12 +654,15 @@ export function useTokenSpeedTest() {
     testCases: TestCase[],
     config: TokenTestConfig,
     onProgress?: (current: number, total: number, result: TokenTestResult) => void,
-    onRealTimeUpdate?: (testId: string, data: {
-      tokens: number;
-      speed: number;
-      firstTokenTime?: number;
-      status?: 'running' | 'completed' | 'error';
-    }) => void
+    onRealTimeUpdate?: (
+      testId: string,
+      data: {
+        tokens: number;
+        speed: number;
+        firstTokenTime?: number;
+        status?: 'running' | 'completed' | 'error';
+      },
+    ) => void,
   ): Promise<TokenTestResult[]> => {
     const results: TokenTestResult[] = [];
 
@@ -646,12 +698,15 @@ export function useTokenSpeedTest() {
     testCases: TestCase[],
     config: TokenTestConfig,
     onProgress?: (current: number, total: number, result: TokenTestResult) => void,
-    onRealTimeUpdate?: (testId: string, data: {
-      tokens: number;
-      speed: number;
-      firstTokenTime?: number;
-      status?: 'running' | 'completed' | 'error';
-    }) => void
+    onRealTimeUpdate?: (
+      testId: string,
+      data: {
+        tokens: number;
+        speed: number;
+        firstTokenTime?: number;
+        status?: 'running' | 'completed' | 'error';
+      },
+    ) => void,
   ): Promise<TokenTestResult[]> => {
     const maxConcurrent = 5; // 限制并发数量
     const results: TokenTestResult[] = [];
@@ -694,12 +749,15 @@ export function useTokenSpeedTest() {
     config: TokenTestConfig,
     suiteId: string = 'custom',
     onProgress?: (current: number, total: number, result: TokenTestResult) => void,
-    onRealTimeUpdate?: (testId: string, data: {
-      tokens: number;
-      speed: number;
-      firstTokenTime?: number;
-      status?: 'running' | 'completed' | 'error';
-    }) => void
+    onRealTimeUpdate?: (
+      testId: string,
+      data: {
+        tokens: number;
+        speed: number;
+        firstTokenTime?: number;
+        status?: 'running' | 'completed' | 'error';
+      },
+    ) => void,
   ): Promise<void> => {
     if (testCases.length === 0) {
       batchError.value = '请选择至少一个测试用例';
@@ -738,27 +796,38 @@ export function useTokenSpeedTest() {
       }
 
       // 计算汇总统计
-      const completedTests = results.filter(r => r.status === 'completed');
-      const failedTests = results.filter(r => r.status === 'error');
+      const completedTests = results.filter((r) => r.status === 'completed');
+      const failedTests = results.filter((r) => r.status === 'error');
 
       const summary = {
         totalTests: testCases.length,
         completedTests: completedTests.length,
         failedTests: failedTests.length,
-        avgFirstTokenTime: completedTests.length > 0
-          ? Math.round(completedTests.reduce((sum, r) => sum + (r.firstTokenTime || 0), 0) / completedTests.length)
-          : undefined,
-        avgTotalSpeed: completedTests.length > 0
-          ? Math.round(completedTests.reduce((sum, r) => sum + r.tokensPerSecond, 0) / completedTests.length * 10) / 10
-          : undefined,
-        avgOutputSpeed: completedTests.filter(r => r.outputSpeed).length > 0
-          ? Math.round(
-              completedTests
-                .filter(r => r.outputSpeed)
-                .reduce((sum, r) => sum + (r.outputSpeed || 0), 0) /
-              completedTests.filter(r => r.outputSpeed).length * 10
-            ) / 10
-          : undefined,
+        avgFirstTokenTime:
+          completedTests.length > 0
+            ? Math.round(
+                completedTests.reduce((sum, r) => sum + (r.firstTokenTime || 0), 0) /
+                  completedTests.length,
+              )
+            : undefined,
+        avgTotalSpeed:
+          completedTests.length > 0
+            ? Math.round(
+                (completedTests.reduce((sum, r) => sum + r.tokensPerSecond, 0) /
+                  completedTests.length) *
+                  10,
+              ) / 10
+            : undefined,
+        avgOutputSpeed:
+          completedTests.filter((r) => r.outputSpeed).length > 0
+            ? Math.round(
+                (completedTests
+                  .filter((r) => r.outputSpeed)
+                  .reduce((sum, r) => sum + (r.outputSpeed || 0), 0) /
+                  completedTests.filter((r) => r.outputSpeed).length) *
+                  10,
+              ) / 10
+            : undefined,
         totalDuration: Date.now() - batchTest.startTime.getTime(),
       };
 
@@ -769,12 +838,11 @@ export function useTokenSpeedTest() {
       batchTest.summary = summary;
 
       // 强制触发响应性更新
-      const index = batchResults.value.findIndex(b => b.suiteId === batchTest.suiteId);
+      const index = batchResults.value.findIndex((b) => b.suiteId === batchTest.suiteId);
       if (index !== -1) {
         batchResults.value[index] = { ...batchTest };
       }
       currentBatchTest.value = { ...batchTest };
-
     } catch (err) {
       console.error('Batch test error:', err);
       batchError.value = err instanceof Error ? err.message : '批量测试失败';
@@ -782,7 +850,7 @@ export function useTokenSpeedTest() {
       batchTest.endTime = new Date();
 
       // 强制触发响应性更新
-      const index = batchResults.value.findIndex(b => b.suiteId === batchTest.suiteId);
+      const index = batchResults.value.findIndex((b) => b.suiteId === batchTest.suiteId);
       if (index !== -1) {
         batchResults.value[index] = { ...batchTest };
       }

@@ -22,7 +22,7 @@
   import TestResultCard from './components/TestResultCard.vue';
   import TestConfigSelector from './components/TestConfigSelector.vue';
   import BatchProgressCard from './components/BatchProgressCard.vue';
-  import BatchResults from './components/BatchResults.vue';
+import TestProgressCard from './components/TestProgressCard.vue'
 
   // 使用 Token 速度测试 hook
   const {
@@ -109,12 +109,13 @@
         data.actualDuration = now - data.startTime;
       }
 
-      // 计算总速度（包含首次响应时间）
-      const calculatedTotalSpeed = data.actualDuration > 0 ? (data.tokens * 1000) / data.actualDuration : 0;
+      // 计算总速度（包含首次响应时间）- 使用completionTokens，因为总速度指的也是输出速度
+      const outputTokens = data.actualTokens?.completionTokens || data.tokens;
+      const calculatedTotalSpeed = data.actualDuration > 0 ? (outputTokens * 1000) / data.actualDuration : 0;
 
-      // 计算纯输出速度（不包含首次响应时间）
+      // 计算纯输出速度（不包含首次响应时间）- 使用completionTokens
       const outputElapsedTime = data.firstTokenTime ? (data.actualDuration - data.firstTokenTime) : 0;
-      const outputSpeed = outputElapsedTime > 0 && data.tokens > 0 ? (data.tokens * 1000) / outputElapsedTime : 0;
+      const outputSpeed = outputElapsedTime > 0 && outputTokens > 0 ? (outputTokens * 1000) / outputElapsedTime : 0;
 
       // 对于已完成测试，使用重新计算的精确速度；对于运行中的测试，使用实时更新的速度
       const finalTotalSpeed = data.status === 'completed' ? calculatedTotalSpeed : (data.speed || calculatedTotalSpeed);
@@ -126,13 +127,13 @@
         testCaseName: data.testCaseName, // 直接使用存储的测试用例名称
         status: data.status,
         tokens: data.tokens,
+        actualTokens: data.actualTokens, // API返回的实际token数据
         totalSpeed: finalTotalSpeed, // 使用修正后的总速度
         currentSpeed: finalCurrentSpeed, // 使用修正后的当前速度
         outputSpeed, // 纯输出速度
         firstTokenTime: data.firstTokenTime,
         startTime: data.startTime,
-        elapsedTime: data.actualDuration,
-        actualDuration: data.actualDuration, // 始终有值：0或实际持续时间
+        duration: data.actualDuration, // 与BatchResults保持一致，使用duration字段
         // 添加历史数据供图表使用
         historyData: data.historyData || []
       });
@@ -228,21 +229,6 @@
   /** 清空测试用例 */
   const handleClearAllTestCases = () => {
     selectedTestCases.value = [];
-  };
-
-  /** 删除批量测试中的单个结果 */
-  const handleDeleteBatchResult = (batchId: string, resultId: string) => {
-    const batch = batchResults.value.find(b => b.suiteId === batchId);
-    if (batch) {
-      const index = batch.results.findIndex(r => r.id === resultId);
-      if (index !== -1) {
-        batch.results.splice(index, 1);
-        // 如果没有结果了，删除整个批次
-        if (batch.results.length === 0) {
-          handleDeleteBatch(batchId);
-        }
-      }
-    }
   };
 
   /** 删除整个批量测试结果 */
@@ -350,14 +336,42 @@
           {{ batchError }}
         </div>
 
-        <!-- 批量测试结果 -->
-        <BatchResults
-          v-if="batchResults.length > 0"
-          :batch-results="batchResults"
-          @clear-all="clearBatchResults"
-          @delete-result="handleDeleteBatchResult"
-          @delete-batch="handleDeleteBatch"
-        />
+        <!-- 批量测试结果 - 使用TestProgressCard显示 -->
+        <div v-if="batchResults.length > 0" class="space-y-4">
+          <div v-for="batch in batchResults" :key="batch.suiteId" class="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
+            <div class="flex justify-between items-center mb-4">
+              <h2 class="text-lg font-semibold text-gray-800">
+                {{ getTestSuiteById(batch.suiteId)?.name || '批量测试' }} 结果
+              </h2>
+              <BaseButton variant="outline" @click="handleDeleteBatch(batch.suiteId)">
+                删除批次
+              </BaseButton>
+            </div>
+
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <TestProgressCard
+                v-for="result in batch.results"
+                :key="result.id"
+                :progress="{
+                  testId: result.id,
+                  testCaseId: result.testCaseId,
+                  testCaseName: result.testCaseName,
+                  status: result.status,
+                  tokens: result.tokens,
+                  actualTokens: result.actualTokens,
+                  totalSpeed: result.tokensPerSecond,
+                  currentSpeed: result.tokensPerSecond,
+                  outputSpeed: result.outputSpeed || 0,
+                  firstTokenTime: result.firstTokenTime,
+                  startTime: result.timestamp.getTime(),
+                  duration: result.duration,
+                  historyData: []
+                }"
+                :show-chart="false"
+              />
+            </div>
+          </div>
+        </div>
       </div>
     </div>
   </div>

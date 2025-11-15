@@ -26,6 +26,7 @@
   // 图表 DOM 引用
   const chartRef = ref<HTMLElement>();
   let chartInstance: echarts.ECharts | null = null;
+  let resizeObserver: ResizeObserver | null = null;
 
   // 存储历史数据点
   const historyData = ref<SpeedDataPoint[]>([]);
@@ -267,8 +268,8 @@
     chartInstance.setOption(chartOption.value);
 
     // 响应式更新
-    const resizeObserver = new ResizeObserver(() => {
-      if (chartInstance) {
+    resizeObserver = new ResizeObserver(() => {
+      if (chartInstance && !chartInstance.isDisposed()) {
         chartInstance.resize();
       }
     });
@@ -285,7 +286,7 @@
 
   // 更新图表数据
   const updateChart = () => {
-    if (chartInstance) {
+    if (chartInstance && !chartInstance.isDisposed()) {
       chartInstance.setOption(chartOption.value, true);
     }
   };
@@ -295,8 +296,16 @@
   });
 
   onUnmounted(() => {
-    if (chartInstance) {
+    // 清理 ResizeObserver
+    if (resizeObserver) {
+      resizeObserver.disconnect();
+      resizeObserver = null;
+    }
+
+    // 清理图表实例
+    if (chartInstance && !chartInstance.isDisposed()) {
       chartInstance.dispose();
+      chartInstance = null;
     }
   });
 
@@ -311,7 +320,7 @@
 
   // 监听图表尺寸变化
   watch(() => [props.width, props.height], () => {
-    if (chartInstance) {
+    if (chartInstance && !chartInstance.isDisposed()) {
       chartInstance.resize();
     }
   }, { flush: 'post' });

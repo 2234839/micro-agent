@@ -15,8 +15,7 @@
     outputSpeed: number;
     firstTokenTime?: number;
     startTime: number;
-    elapsedTime: number;
-    actualDuration: number; // 实际测试持续时间，未完成时为当前运行时间
+    duration: number; // 总耗时（毫秒），与BatchResults保持一致
     // 添加历史数据
     historyData: Array<{
       time: number;
