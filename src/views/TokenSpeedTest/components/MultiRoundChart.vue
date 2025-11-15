@@ -1,6 +1,6 @@
 <script setup lang="ts">
   /** 多轮测试总图表组件 - 展示跨轮次的累计性能数据 */
-  import { computed, ref, onMounted, onUnmounted, watch, nextTick } from 'vue';
+  import { computed, ref, onMounted, onUnmounted, watch, nextTick, shallowRef } from 'vue';
   import * as echarts from 'echarts';
   import type { TokenTestResult } from '../../../composables/useTokenSpeedTest';
 
@@ -27,6 +27,10 @@
   // 图表 DOM 引用
   const chartRef = ref<HTMLElement>();
   let chartInstance: echarts.ECharts | null = null;
+  let resizeObserver: ResizeObserver | null = null;
+
+  // 使用防抖来避免频繁更新
+  let updateTimer: NodeJS.Timeout | null = null;
 
   // 格式化速度显示
   const formatSpeed = (speed: number): string => {
@@ -44,33 +48,28 @@
     return `${(ms / 60000).toFixed(1)}m`;
   };
 
-  // 处理多轮测试数据，生成图表数据
-  const chartData = computed(() => {
+  // 使用shallowRef缓存计算结果
+  const cachedChartData = shallowRef<ChartDataPoint[]>([]);
+  const cachedTestCases = shallowRef<Array<[string, string]>>([]);
+
+  // 处理多轮测试数据，生成图表数据（优化版本）
+  const processData = () => {
     if (!props.multiRoundResults || props.multiRoundResults.length === 0) {
-      return [];
+      cachedChartData.value = [];
+      cachedTestCases.value = [];
+      return;
     }
 
     const allDataPoints: ChartDataPoint[] = [];
+    const testCaseMap = new Map<string, string>();
     let globalTimeOffset = 0; // 全局时间偏移，确保多轮测试的时间连续性
 
     props.multiRoundResults.forEach((roundData, roundIndex) => {
       const { round, results } = roundData;
 
       results.forEach(result => {
-        if (result.status === 'completed' && result.chunks.length > 0) {
-          // 为每个测试用例创建数据点
-          result.chunks.forEach((chunk, chunkIndex) => {
-            allDataPoints.push({
-              round,
-              time: globalTimeOffset + chunk.timestamp, // 使用全局时间偏移
-              totalSpeed: result.tokensPerSecond || 0,
-              outputSpeed: result.outputSpeed || 0,
-              testCaseName: result.testCaseName,
-              testCaseId: result.testCaseId
-            });
-          });
-
-          // 添加最终完成点
+        if (result.status === 'completed') {
+          // 直接使用最终结果，避免处理chunks数据
           allDataPoints.push({
             round,
             time: globalTimeOffset + result.duration,
@@ -79,29 +78,27 @@
             testCaseName: result.testCaseName,
             testCaseId: result.testCaseId
           });
+
+          // 收集测试用例信息
+          if (!testCaseMap.has(result.testCaseId)) {
+            testCaseMap.set(result.testCaseId, result.testCaseName);
+          }
         }
       });
 
       // 更新全局时间偏移，为下一轮测试预留间隔时间
       if (roundIndex < props.multiRoundResults.length - 1) {
-        // 估算轮次间隔时间，这里假设2秒间隔
-        globalTimeOffset += 2000;
+        globalTimeOffset += 2000; // 2秒间隔
       }
     });
 
-    return allDataPoints.sort((a, b) => a.time - b.time);
-  });
+    cachedChartData.value = allDataPoints.sort((a, b) => a.time - b.time);
+    cachedTestCases.value = Array.from(testCaseMap.entries());
+  };
 
-  // 获取所有唯一的测试用例
-  const uniqueTestCases = computed(() => {
-    const testCaseMap = new Map<string, string>();
-    chartData.value.forEach(point => {
-      if (!testCaseMap.has(point.testCaseId)) {
-        testCaseMap.set(point.testCaseId, point.testCaseName);
-      }
-    });
-    return Array.from(testCaseMap.entries());
-  });
+  // 计算属性
+  const chartData = computed(() => cachedChartData.value);
+  const uniqueTestCases = computed(() => cachedTestCases.value);
 
   // 为每个测试用例生成不同的颜色
   const colors = [
@@ -109,13 +106,10 @@
     '#ec4899', '#06b6d4', '#84cc16', '#f97316', '#6366f1'
   ];
 
-  // 计算图表配置
+  // 计算图表配置（简化版本）
   const chartOption = computed(() => {
     if (chartData.value.length === 0) {
       return {
-        grid: { show: false },
-        xAxis: { show: false },
-        yAxis: { show: false },
         title: {
           text: '暂无数据',
           left: 'center',
@@ -125,8 +119,7 @@
       };
     }
 
-    const times = chartData.value.map(d => d.time);
-    const speeds = chartData.value.flatMap(d => [d.totalSpeed, d.outputSpeed]);
+    const speeds = chartData.value.map(d => d.totalSpeed);
     const maxSpeed = Math.max(...speeds, 100) * 1.2;
 
     // 为每个测试用例生成系列数据
@@ -139,65 +132,19 @@
         type: 'line',
         data: testCaseData.map(d => [d.time, d.totalSpeed]),
         smooth: true,
-        smoothMonotone: 'x',
-        symbol: 'circle',
-        symbolSize: 4,
+        symbol: 'none', // 移除符号点以提高性能
         lineStyle: {
           color,
-          width: 2.5,
-          opacity: 0.8
-        },
-        itemStyle: {
-          color,
-          borderColor: '#fff',
-          borderWidth: 1
+          width: 2
         },
         emphasis: {
-          scale: 1.5,
-          lineStyle: { width: 3 }
+          disabled: true // 禁用hover效果以提高性能
         }
       };
     });
 
-    // 准备轮次分隔线数据
-    let markLineData: any[] = [];
-
-    // 找到每轮测试的开始时间
-    const roundStartTimes = new Set<number>();
-    chartData.value.forEach(point => {
-      if (!roundStartTimes.has(point.time)) {
-        roundStartTimes.add(point.time);
-      }
-    });
-
-    Array.from(roundStartTimes).slice(1).forEach(time => {
-      markLineData.push({
-        xAxis: time,
-        lineStyle: {
-          color: '#e5e7eb',
-          type: 'dashed',
-          width: 1
-        },
-        label: {
-          show: true,
-          position: 'start',
-          formatter: `轮次 ${chartData.value.find(d => d.time === time)?.round}`,
-          color: '#6b7280',
-          fontSize: 11
-        }
-      });
-    });
-
-    // 为每个系列添加markLine
-    const seriesWithMarkLines = series.map((serie, index) => ({
-      ...serie,
-      markLine: {
-        data: markLineData,
-        silent: true
-      }
-    }));
-
     return {
+      animation: false, // 禁用动画以提高性能
       title: {
         text: `多轮测试性能趋势 (${props.multiRoundResults.length} 轮)`,
         left: 'center',
@@ -211,56 +158,24 @@
         left: 60,
         right: 20,
         top: 60,
-        bottom: 80,
+        bottom: 60,
         containLabel: true
       },
       tooltip: {
         trigger: 'axis',
-        backgroundColor: 'rgba(255, 255, 255, 0.95)',
-        borderColor: 'rgba(0, 0, 0, 0.1)',
-        borderWidth: 1,
-        textStyle: { color: '#1f2937', fontSize: 12 },
-        padding: [10, 14],
-        borderRadius: 8,
-        shadowColor: 'rgba(0, 0, 0, 0.1)',
-        shadowBlur: 10,
         formatter: (params: any[]) => {
           if (!params || params.length === 0) return '';
-
           const data = params[0];
           const timePoint = data.axisValue;
           const dataPoint = chartData.value.find(d => Math.abs(d.time - timePoint) < 100);
-
           if (!dataPoint) return '';
-
-          return `
-            <div style="padding: 4px 0;">
-              <div style="font-weight: 600; margin-bottom: 8px; color: #1f2937; font-size: 13px;">
-                🔄 轮次 ${dataPoint.round} - ${dataPoint.testCaseName}
-              </div>
-              <div style="display: flex; align-items: center; margin-bottom: 4px;">
-                <span style="display: inline-block; width: 8px; height: 2px; background: ${data.color}; margin-right: 8px; border-radius: 1px;"></span>
-                <span style="color: #3b82f6; font-weight: 500;">总速度:</span>
-                <span style="color: #6b7280; margin-left: 4px;">${formatSpeed(dataPoint.totalSpeed)}</span>
-              </div>
-              <div style="display: flex; align-items: center;">
-                <span style="color: #10b981; font-weight: 500;">输出速度:</span>
-                <span style="color: #6b7280; margin-left: 4px;">${formatSpeed(dataPoint.outputSpeed)}</span>
-              </div>
-              <div style="margin-top: 4px; padding-top: 4px; border-top: 1px solid #f3f4f6; font-size: 11px; color: #9ca3af;">
-                ⏱️ ${formatTime(dataPoint.time)}
-              </div>
-            </div>
-          `;
+          return `${dataPoint.testCaseName} (轮次${dataPoint.round}): ${formatSpeed(dataPoint.totalSpeed)}`;
         }
       },
       legend: {
         data: uniqueTestCases.value.map(([_, name]) => name),
         top: 30,
-        textStyle: { fontSize: 12, color: '#666' },
-        itemWidth: 20,
-        itemHeight: 10,
-        type: 'scroll'
+        textStyle: { fontSize: 12, color: '#666' }
       },
       xAxis: {
         type: 'value',
@@ -268,46 +183,27 @@
         nameLocation: 'middle',
         nameGap: 30,
         nameTextStyle: { color: '#666', fontSize: 12 },
-        data: times,
-        axisLine: { lineStyle: { color: '#e5e7eb' } },
-        axisTick: { show: false },
         axisLabel: {
           fontSize: 11,
           color: '#999',
           formatter: (value: number) => formatTime(value)
-        },
-        splitLine: {
-          show: true,
-          lineStyle: {
-            color: '#f3f4f6',
-            type: 'dashed'
-          }
         }
       },
       yAxis: {
         type: 'value',
-        name: '速度 (token/s)',
+        name: '速度',
         nameLocation: 'middle',
         nameGap: 40,
         nameTextStyle: { color: '#666', fontSize: 12 },
         min: 0,
         max: maxSpeed,
-        axisLine: { lineStyle: { color: '#e5e7eb' } },
-        axisTick: { show: false },
         axisLabel: {
           fontSize: 11,
           color: '#999',
           formatter: (value: number) => formatSpeed(value)
-        },
-        splitLine: {
-          show: true,
-          lineStyle: {
-            color: '#f3f4f6',
-            type: 'dashed'
-          }
         }
       },
-      series: seriesWithMarkLines
+      series
     };
   });
 
@@ -331,38 +227,55 @@
     // 设置图表配置
     chartInstance.setOption(chartOption.value);
 
-    // 响应式更新
-    const resizeObserver = new ResizeObserver(() => {
-      if (chartInstance) {
-        chartInstance.resize();
+    // 响应式更新（使用防抖）
+    let resizeTimer: NodeJS.Timeout | null = null;
+    resizeObserver = new ResizeObserver(() => {
+      if (resizeTimer) {
+        clearTimeout(resizeTimer);
       }
+      resizeTimer = setTimeout(() => {
+        if (chartInstance) {
+          chartInstance.resize();
+        }
+      }, 100);
     });
     resizeObserver.observe(chartRef.value);
   };
 
-  // 更新图表数据
-  const updateChart = () => {
-    if (chartInstance) {
-      chartInstance.setOption(chartOption.value, true);
+  // 防抖更新图表数据
+  const debouncedUpdateChart = () => {
+    if (updateTimer) {
+      clearTimeout(updateTimer);
     }
+    updateTimer = setTimeout(() => {
+      processData();
+      if (chartInstance) {
+        chartInstance.setOption(chartOption.value, true);
+      }
+    }, 200); // 200ms防抖
   };
 
   onMounted(() => {
     initChart();
+    processData(); // 初始化时处理数据
   });
 
   onUnmounted(() => {
+    if (updateTimer) {
+      clearTimeout(updateTimer);
+    }
+    if (resizeObserver) {
+      resizeObserver.disconnect();
+    }
     if (chartInstance) {
       chartInstance.dispose();
     }
   });
 
-  // 监听数据变化
-  watch(() => props.multiRoundResults, () => {
-    updateChart();
-  }, { deep: true });
+  // 监听数据变化（使用防抖）
+  watch(() => props.multiRoundResults, debouncedUpdateChart, { deep: true });
 
-  // 监听图表尺寸变化
+  // 监听图表尺寸变化（使用防抖）
   watch(() => [props.width, props.height], () => {
     if (chartInstance) {
       chartInstance.resize();

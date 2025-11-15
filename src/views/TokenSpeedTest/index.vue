@@ -347,6 +347,45 @@
     }
   };
 
+  /** 计算完成测试的数据（用于显示结果）- 与realtimeTestProgress完全一致的计算逻辑 */
+  const calculateCompletedTestData = (result: TokenTestResult) => {
+    // 使用与realtimeTestProgress完全相同的数据计算逻辑
+    const duration = result.duration;
+
+    // 计算总速度（包含首次响应时间）- 使用completionTokens，因为总速度指的也是输出速度
+    const outputTokens = result.actualTokens?.completionTokens || result.tokens;
+    const calculatedTotalSpeed = duration > 0 ? (outputTokens * 1000) / duration : 0;
+
+    // 计算纯输出速度（不包含首次响应时间）- 使用completionTokens
+    const outputElapsedTime = result.firstTokenTime ? (duration - result.firstTokenTime) : 0;
+    const outputSpeed = outputElapsedTime > 0 && outputTokens > 0 ? (outputTokens * 1000) / outputElapsedTime : 0;
+
+    // 对于已完成测试，使用重新计算的精确速度；与实时测试保持一致
+    const finalTotalSpeed = calculatedTotalSpeed;
+    const finalCurrentSpeed = finalTotalSpeed;
+
+    return {
+      testId: result.id,
+      testCaseId: result.testCaseId,
+      testCaseName: result.testCaseName,
+      status: result.status,
+      tokens: result.tokens,
+      actualTokens: result.actualTokens,
+      totalSpeed: finalTotalSpeed, // 使用与实时测试相同的总速度计算
+      currentSpeed: finalCurrentSpeed, // 使用与实时测试相同的当前速度计算
+      outputSpeed: outputSpeed, // 使用与实时测试相同的输出速度计算
+      firstTokenTime: result.firstTokenTime,
+      startTime: result.timestamp.getTime(),
+      duration: result.duration,
+      historyData: result.chunks ? result.chunks.map(chunk => ({
+        time: chunk.timestamp,
+        totalSpeed: result.tokensPerSecond || 0,
+        currentSpeed: result.tokensPerSecond || 0,
+        outputSpeed: result.outputSpeed || 0
+      })) : []
+    };
+  };
+
   onMounted(() => {
     loadConfig();
   });
@@ -481,22 +520,8 @@
               <TestProgressCard
                 v-for="result in batch.results"
                 :key="result.id"
-                :progress="{
-                  testId: result.id,
-                  testCaseId: result.testCaseId,
-                  testCaseName: result.testCaseName,
-                  status: result.status,
-                  tokens: result.tokens,
-                  actualTokens: result.actualTokens,
-                  totalSpeed: result.tokensPerSecond,
-                  currentSpeed: result.tokensPerSecond,
-                  outputSpeed: result.outputSpeed || 0,
-                  firstTokenTime: result.firstTokenTime,
-                  startTime: result.timestamp.getTime(),
-                  duration: result.duration,
-                  historyData: []
-                }"
-                :show-chart="false"
+                :progress="calculateCompletedTestData(result)"
+                :show-chart="true"
               />
             </div>
           </div>
@@ -513,22 +538,8 @@
               <TestProgressCard
                 v-for="result in roundData.results"
                 :key="result.id"
-                :progress="{
-                  testId: result.id,
-                  testCaseId: result.testCaseId,
-                  testCaseName: result.testCaseName,
-                  status: result.status,
-                  tokens: result.tokens,
-                  actualTokens: result.actualTokens,
-                  totalSpeed: result.tokensPerSecond,
-                  currentSpeed: result.tokensPerSecond,
-                  outputSpeed: result.outputSpeed || 0,
-                  firstTokenTime: result.firstTokenTime,
-                  startTime: result.timestamp.getTime(),
-                  duration: result.duration,
-                  historyData: []
-                }"
-                :show-chart="false"
+                :progress="calculateCompletedTestData(result)"
+                :show-chart="true"
               />
             </div>
           </div>
