@@ -88,9 +88,6 @@
       <div class="flex justify-between items-start">
         <div class="flex-1 min-w-0">
           <div class="font-medium text-gray-900 truncate">{{ progress.testCaseName }}</div>
-          <div class="text-xs text-gray-500">
-            运行时间: {{ formatTime(progress.duration) }}
-          </div>
         </div>
         <span
           :class="[

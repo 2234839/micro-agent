@@ -137,14 +137,14 @@ export function useTokenSpeedTest() {
    * @returns 估算的 token 数量
    */
   const estimateTokenCount = (text: string): number => {
-    // 简单的token估算：中文字符1个token，英文单词平均1.3个token
+    // 更精确的token估算：中文字符0.7个token，英文单词平均1.3个token
     const chineseChars = (text.match(/[\u4e00-\u9fff]/g) || []).length;
     const englishWords = text
       .replace(/[\u4e00-\u9fff]/g, '')
       .trim()
       .split(/\s+/)
       .filter((word) => word.length > 0).length;
-    return Math.ceil(chineseChars + englishWords * 1.3);
+    return Math.ceil(chineseChars * 0.7 + englishWords * 1.3);
   };
 
   /**
@@ -244,10 +244,11 @@ export function useTokenSpeedTest() {
 
                 const currentDuration = Date.now() - startTime;
                 newTest.duration = currentDuration;
-                if (chunk.usage.completion_tokens > 0 && currentDuration > 0) {
+                // 确保持续时间至少为1ms，避免除零错误
+                const safeCurrentDuration = Math.max(currentDuration, 1);
+                if (chunk.usage.completion_tokens > 0) {
                   newTest.tokensPerSecond =
-                    Math.round(((chunk.usage.completion_tokens * 1000) / currentDuration) * 10) /
-                    10;
+                    Math.round(((chunk.usage.completion_tokens * 1000) / safeCurrentDuration) * 10) / 10;
                 }
               }
             }
@@ -280,9 +281,11 @@ export function useTokenSpeedTest() {
                 newTest.tokens = totalTokens;
                 const currentDuration = Date.now() - startTime;
                 newTest.duration = currentDuration;
-                if (totalTokens > 0 && currentDuration > 0) {
+                // 确保持续时间至少为1ms，避免除零错误
+                const safeCurrentDuration = Math.max(currentDuration, 1);
+                if (totalTokens > 0) {
                   newTest.tokensPerSecond =
-                    Math.round(((totalTokens * 1000) / currentDuration) * 10) / 10;
+                    Math.round(((totalTokens * 1000) / safeCurrentDuration) * 10) / 10;
                 }
               } else {
                 // 即使有准确 token 数据，也记录 chunk 内容用于分析
@@ -320,8 +323,9 @@ export function useTokenSpeedTest() {
       const outputTokens = tokensForSpeed;
       if (newTest.firstTokenTime && outputTokens > 0) {
         const outputDuration = totalDuration - newTest.firstTokenTime;
-        newTest.outputSpeed =
-          outputDuration > 0 ? Math.round(((outputTokens * 1000) / outputDuration) * 10) / 10 : 0;
+        // 确保输出时间至少为1ms，避免除零错误
+        const safeOutputDuration = Math.max(outputDuration, 1);
+        newTest.outputSpeed = Math.round(((outputTokens * 1000) / safeOutputDuration) * 10) / 10;
       }
     } catch (err) {
       console.error('Token speed test error:', err);
@@ -492,12 +496,14 @@ export function useTokenSpeedTest() {
               }
 
               // 计算实时速度 - 使用 reactive 自动响应
-              if (realtimeData.tokens > 0 && currentTime > 0) {
+              // 确保时间至少为1ms，避免除零错误
+              const safeCurrentTime = Math.max(currentTime, 1);
+              if (realtimeData.tokens > 0) {
                 const instantSpeed =
-                  Math.round(((realtimeData.tokens * 1000) / currentTime) * 10) / 10;
+                  Math.round(((realtimeData.tokens * 1000) / safeCurrentTime) * 10) / 10;
                 realtimeData.currentSpeed = instantSpeed;
                 realtimeData.speed = instantSpeed;
-              } else if (currentTime > 0) {
+              } else {
                 // 即使没有 tokens，也更新状态确保响应式
                 realtimeData.currentSpeed = 0;
                 realtimeData.speed = 0;
@@ -508,18 +514,26 @@ export function useTokenSpeedTest() {
               if (onRealTimeUpdate && now - lastUpdateTime >= UPDATE_INTERVAL_MS) {
                 lastUpdateTime = now;
 
-                // 使用 completionTokens 计算当前时间点的各项速度数据，如果没有则回退到计算的 tokens
+                // 实时速度计算：始终使用累积的估算tokens来计算实时速度
                 const currentDuration = now - startTime;
-                const tokensForSpeed = realtimeData.actualTokens?.completionTokens || realtimeData.tokens || 0;
+                // 使用当前累积的tokens来计算实时速度（测试过程中始终有值）
+                const currentTokens = realtimeData.tokens || 0;
+
+                // 实时更新实际持续时间
+                realtimeData.actualDuration = currentDuration;
+
+                // 确保总持续时间至少为1ms，避免除零错误
+                const safeCurrentDuration = Math.max(currentDuration, 1);
                 const totalSpeed =
-                  currentDuration > 0 ? (tokensForSpeed * 1000) / currentDuration : 0;
+                  currentTokens > 0 ? Math.round(((currentTokens * 1000) / safeCurrentDuration) * 10) / 10 : 0;
+
                 const outputDuration = realtimeData.firstTokenTime
                   ? currentDuration - realtimeData.firstTokenTime
                   : 0;
+                // 确保输出时间至少为1ms，避免除零错误
+                const safeOutputDuration = Math.max(outputDuration, 1);
                 const outputSpeed =
-                  outputDuration > 0 && tokensForSpeed > 0
-                    ? (tokensForSpeed * 1000) / outputDuration
-                    : 0;
+                  currentTokens > 0 ? Math.round(((currentTokens * 1000) / safeOutputDuration) * 10) / 10 : 0;
 
                 // 添加历史数据点
                 const historyPoint = {
@@ -560,8 +574,9 @@ export function useTokenSpeedTest() {
       // 计算纯输出速度（不包括首次响应时间）
       if (testResult.firstTokenTime && finalTokens > 0) {
         const outputDuration = totalDuration - testResult.firstTokenTime;
-        testResult.outputSpeed =
-          outputDuration > 0 ? Math.round(((finalTokens * 1000) / outputDuration) * 10) / 10 : 0;
+        // 确保输出时间至少为1ms，避免除零错误
+        const safeOutputDuration = Math.max(outputDuration, 1);
+        testResult.outputSpeed = Math.round(((finalTokens * 1000) / safeOutputDuration) * 10) / 10;
       }
 
       // 更新实时状态为完成，记录实际的结束时间和持续时间
@@ -901,9 +916,9 @@ export function useTokenSpeedTest() {
    */
   const formatSpeed = (tokensPerSecond: number): string => {
     if (tokensPerSecond < 1000) {
-      return `${tokensPerSecond.toFixed(1)} token/s`;
+      return `${tokensPerSecond.toFixed(0)}/s`;
     } else {
-      return `${(tokensPerSecond / 1000).toFixed(2)}k token/s`;
+      return `${(tokensPerSecond / 1000).toFixed(1)}k/s`;
     }
   };
 
