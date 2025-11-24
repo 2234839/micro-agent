@@ -141,8 +141,6 @@
     error.value = '';
     isLoading.value = true;
 
-    scrollToBottom();
-
     try {
       const chatLayer = MicroAgentService.Default.pipe(
         Layer.provide(OpenAIConfigService.Default),
@@ -225,9 +223,6 @@
                   delete currentStepData.error;
                 }
               }
-
-              // 自动滚动到底部
-              scrollToBottom();
             });
           });
 
@@ -294,7 +289,6 @@
               if (lastMessage && lastMessage.type === 'ai') {
                 // 累积并立即更新显示
                 lastMessage.content += content;
-                scrollToBottom();
               }
             }
 
@@ -308,7 +302,6 @@
       error.value = err instanceof Error ? err.message : '发送失败';
     } finally {
       isLoading.value = false;
-      scrollToBottom();
     }
   };
 

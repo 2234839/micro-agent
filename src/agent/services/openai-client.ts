@@ -1,11 +1,11 @@
 import { Effect, Stream } from 'effect';
 import { OpenAI } from 'openai';
 import type {
-  ChatCompletionMessageParam,
-  ChatCompletionCreateParams,
   ChatCompletionChunk,
+  ChatCompletionCreateParams,
+  ChatCompletionMessageParam,
 } from 'openai/resources/chat/completions';
-import { OpenAIConfigService, type OpenAIConfig } from '../config/openai-config';
+import { OpenAIConfigService } from '../config/openai-config';
 
 /** OpenAI 客户端服务 */
 export class OpenAIClientService extends Effect.Service<OpenAIClientService>()(
@@ -36,6 +36,7 @@ export class OpenAIClientService extends Effect.Service<OpenAIClientService>()(
             enableReasoning?: boolean;
             tools?: Array<{ type: 'function'; function: { name: string; description: string; parameters: Record<string, unknown> } }>;
             toolChoice?: 'auto' | 'none';
+            signal?: AbortSignal;
           },
         ): Effect.Effect<Stream.Stream<ChatCompletionChunk, Error>, Error, never> =>
           Effect.gen(function* () {
@@ -68,23 +69,42 @@ export class OpenAIClientService extends Effect.Service<OpenAIClientService>()(
               (params as { reasoning_effort?: string }).reasoning_effort = reasoningEffort;
             }
 
-            // 获取原生流响应
+            // 获取原生流响应，支持中断
             const streamResponse = yield* Effect.tryPromise({
-              try: () => openAI.chat.completions.create(params),
-              catch: (error) => new Error(`OpenAI API Error: ${error}`),
+              try: () => {
+                // OpenAI 的 create 方法支持在第二个参数中传递 signal
+                return openAI.chat.completions.create(params, {
+                  signal: options?.signal,
+                });
+              },
+              catch: (error) => {
+                // 检查是否是用户主动取消
+                if (error instanceof Error && error.name === 'AbortError') {
+                  return new Error('Stream was aborted');
+                }
+                return new Error(`OpenAI API Error: ${error}`);
+              },
             });
 
-            // 创建异步可迭代生成器，直接输出 chunk 到流
-            const asyncIterable = async function* () {
-              for await (const chunk of streamResponse) {
-                yield chunk;
+            // 创建异步可迭代生成器，支持中断
+            async function* asyncIterable() {
+              try {
+                for await (const chunk of streamResponse) {
+                  yield chunk;
+                }
+              } catch (error: unknown) {
+                // 如果是中断错误，直接重新抛出让 Effect 处理
+                if (error instanceof Error && error.name === 'AbortError') {
+                  throw new Error('Stream was aborted');
+                }
+                throw error;
               }
-            };
+            }
 
             // 使用 Stream.fromAsyncIterable 创建 Effect Stream
             const stream = Stream.fromAsyncIterable(
               asyncIterable(),
-              (error) => new Error(`Stream processing failed: ${error}`),
+              (error: unknown) => new Error(`Stream processing failed: ${String(error)}`),
             );
 
             return stream;

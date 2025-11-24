@@ -1,41 +1,70 @@
 <script setup lang="ts">
-  import { ref, onMounted } from 'vue';
-  import { useTokenSpeedTest } from '../../composables/useTokenSpeedTest';
+  import { ref, onMounted, computed } from 'vue';
+  import { tokenSpeedTest } from '../../composables/useTokenSpeedTest';
   import { useOpenAIConfig } from '../../composables/useOpenAIConfig';
-
-  // 使用 Token 速度测试 hook
-  const {
-    isLoading,
-    error,
-    currentTokens,
-    currentSpeed,
-    currentElapsedTime,
-    startTokenSpeedTest,
-    formatDuration,
-    formatSpeed
-  } = useTokenSpeedTest();
+  import RealTimeStatus from './RealTimeStatus.vue';
 
   // 使用 OpenAI 配置 hook
   const {
     loadConfig,
     hasValidConfig,
-    getConfig,
   } = useOpenAIConfig();
 
   /** 测试消息输入 */
   const testMessage = ref('');
 
+  /** 当前测试状态 */
+  const currentTest = ref<ReturnType<typeof tokenSpeedTest> | null>(null);
+
+  /** 错误信息 */
+  const errorMessage = computed(() => {
+    return currentTest.value?.state.status.error || '';
+  });
+
   /** 开始 token 速度测试 */
   const handleStartTest = async () => {
-    if (!testMessage.value.trim() || isLoading.value || !hasValidConfig()) {
+    if (!testMessage.value.trim() || currentTest.value?.state.status.isLoading || !hasValidConfig()) {
       return;
     }
 
-    await startTokenSpeedTest(testMessage.value.trim(), getConfig());
-    testMessage.value = '';
+    // 如果有正在进行的测试，先停止它
+    if (currentTest.value?.state.status.isLoading) {
+      currentTest.value.stop();
+    }
+
+    try {
+      // 创建新的测试实例
+      currentTest.value = tokenSpeedTest(testMessage.value.trim(), {
+        temperature: 0.7,
+        maxTokens: 131072,
+        historyInterval:100
+      });
+      testMessage.value = '';
+
+      // 监听程序完成
+      currentTest.value?.programRun.catch((err) => {
+        console.error('Token speed test error:', err);
+      });
+
+    } catch (err) {
+      console.error('Token speed test error:', err);
+    }
   };
 
-  
+  /** 停止测试 */
+  const handleStopTest = () => {
+    if (currentTest.value?.state.status.isLoading) {
+      currentTest.value.stop();
+    }
+  };
+
+  /** 重置测试 */
+  const handleResetTest = () => {
+    if (currentTest.value) {
+      currentTest.value.reset();
+    }
+  };
+
   onMounted(() => {
     loadConfig();
   });
@@ -62,43 +91,65 @@
               class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
               rows="3"
               placeholder="输入要测试的消息..."
-              :disabled="isLoading"
+              :disabled="currentTest?.state.status.isLoading"
               @keydown.enter.prevent="handleStartTest"
             />
           </div>
 
-          <button
-            @click="handleStartTest"
-            :disabled="isLoading || !testMessage.trim() || !hasValidConfig()"
-            class="w-full bg-blue-500 text-white px-4 py-2 rounded-md hover:bg-blue-600 disabled:bg-gray-300 disabled:cursor-not-allowed transition-colors"
-          >
-            {{ isLoading ? '测试中...' : '开始测试' }}
-          </button>
+          <div class="flex space-x-2">
+            <button
+              @click="handleStartTest"
+              :disabled="currentTest?.state.status.isLoading || !testMessage.trim() || !hasValidConfig()"
+              class="flex-1 bg-blue-500 text-white px-4 py-2 rounded-md hover:bg-blue-600 disabled:bg-gray-300 disabled:cursor-not-allowed transition-colors"
+            >
+              {{ currentTest?.state.status.isLoading ? '测试中...' : '开始测试' }}
+            </button>
+
+            <button
+              v-if="currentTest?.state.status.isLoading"
+              @click="handleStopTest"
+              class="bg-red-500 text-white px-4 py-2 rounded-md hover:bg-red-600 transition-colors"
+            >
+              停止
+            </button>
+
+            <button
+              v-if="currentTest && !currentTest.state.status.isLoading"
+              @click="handleResetTest"
+              class="bg-gray-500 text-white px-4 py-2 rounded-md hover:bg-gray-600 transition-colors"
+            >
+              重置
+            </button>
+          </div>
         </div>
+      </div>
+
+      <!-- 测试历史入口 -->
+      <div class="bg-white rounded-lg shadow-sm border border-gray-200 p-4">
+        <div class="flex items-center justify-between">
+          <h3 class="text-lg font-semibold text-gray-800">测试历史</h3>
+          <router-link
+            to="/token-speed-test/history"
+            class="text-blue-600 hover:text-blue-800 text-sm font-medium"
+          >
+            查看历史记录
+          </router-link>
+        </div>
+        <p class="text-gray-600 text-sm mt-2">查看之前的 Token 速度测试结果和统计分析</p>
       </div>
 
       <!-- 实时状态 -->
-      <div v-if="isLoading || currentTokens > 0" class="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
-        <h2 class="text-lg font-semibold text-gray-800 mb-4">测试状态</h2>
-        <div class="grid grid-cols-3 gap-4 text-center">
-          <div>
-            <div class="text-2xl font-bold text-blue-600">{{ currentTokens }}</div>
-            <div class="text-sm text-gray-600">Token 数</div>
-          </div>
-          <div>
-            <div class="text-2xl font-bold text-green-600">{{ formatSpeed(currentSpeed) }}</div>
-            <div class="text-sm text-gray-600">速度</div>
-          </div>
-          <div>
-            <div class="text-2xl font-bold text-purple-600">{{ formatDuration(currentElapsedTime) }}</div>
-            <div class="text-sm text-gray-600">耗时</div>
-          </div>
-        </div>
-      </div>
+      <RealTimeStatus
+        v-if="currentTest"
+        :state="currentTest.state"
+      />
 
       <!-- 错误提示 -->
-      <div v-if="error" class="bg-red-50 border border-red-200 text-red-700 rounded-lg p-4">
-        {{ error }}
+      <div v-if="errorMessage" class="bg-red-50 border border-red-200 text-red-700 rounded-lg p-4">
+        <div class="flex items-center space-x-2">
+          <span class="font-medium">错误:</span>
+          <span>{{ errorMessage }}</span>
+        </div>
       </div>
 
       <!-- 配置提醒 -->
