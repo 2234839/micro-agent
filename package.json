@@ -14,15 +14,15 @@
     "@vueuse/core": "^14.0.0",
     "echarts": "^6.0.0",
     "effect": "^3.19.6",
-    "js-tiktoken": "^1.0.21",
     "katex": "^0.16.25",
     "mermaid": "^11.12.1",
     "openai": "^6.9.1",
     "shiki": "^3.15.0",
     "stream-markdown": "^0.0.10",
     "stream-monaco": "^0.0.6",
-    "vue": "^3.5.24",
-    "vue-renderer-markdown": "0.0.63-beta.0",
+    "vue": "^3.5.25",
+    "vue-echarts": "^8.0.1",
+    "vue-renderer-markdown": "0.0.63-beta.4",
     "vue-router": "^4.6.3"
   },
   "devDependencies": {
@@ -34,6 +34,7 @@
     "tailwindcss": "^4.1.17",
     "typescript": "~5.9.3",
     "vite": "npm:rolldown-vite@7.2.7",
+    "vite-plugin-mcp": "^0.3.1",
     "vite-plugin-monaco-editor-esm": "^2.0.2",
     "vite-plugin-vue-devtools": "^8.0.5",
     "vue-tsc": "^3.1.5"

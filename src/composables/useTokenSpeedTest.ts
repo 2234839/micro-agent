@@ -86,8 +86,8 @@ export interface TokenSpeedTestState {
   };
 }
 
-/** Token 速度测试返回类型 */
-export type ReturnTypeTokenSpeedTest = ReturnType<typeof tokenSpeedTest>;
+/** Token 速度测试实例类型 */
+export type TokenSpeedTestInstance = ReturnType<typeof tokenSpeedTest>;
 
 /**
  * Token 速度测试 Composable Hook
@@ -205,6 +205,9 @@ export function tokenSpeedTest(message: string, options?: {
 
   /** 创建可中断的 Effect 程序 */
   const chatProgram = Effect.gen(function* () {
+    // 在开始请求前记录一次初始数据
+    recordSpeedHistory(false);
+
     const openAIClientService = yield* OpenAIClientService;
     const stream = yield* openAIClientService.createStreamChatCompletion(messages, {
       temperature: config.temperature,

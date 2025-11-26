@@ -74,69 +74,66 @@
 
 <template>
   <div v-if="shouldShow" class="relative bg-white rounded-lg shadow-sm border border-gray-200 overflow-hidden">
-    <!-- 背景图表 -->
-    <SpeedChart :state="state" />
+    <!-- 背景图表层 -->
+    <div class="absolute inset-0 opacity-30">
+      <div class="w-full h-full">
+        <SpeedChart :state="state" />
+      </div>
+    </div>
 
     <!-- 内容层 -->
     <div class="relative z-10 p-6">
-        <!-- 可穿透的空白区域 -->
-        <div class="absolute inset-0 pointer-events-none"></div>
+      <!-- 标题和控制区域 -->
+      <div class="flex items-center justify-between mb-6">
+        <h2 class="text-xl font-bold text-gray-900">测试状态</h2>
+        <div class="flex items-center space-x-3">
+          <!-- 状态指示器 -->
+          <span
+            class="inline-flex items-center px-3 py-1 rounded-full text-sm font-medium"
+            :class="statusClass"
+          >
+            {{ statusText }}
+          </span>
 
-        <!-- 标题和控制区域 -->
-        <div class="flex items-center justify-between mb-4 pointer-events-none">
-          <h2 class="text-lg font-semibold text-gray-800">测试状态</h2>
-          <div class="flex items-center space-x-2 pointer-events-auto">
-            <!-- 状态指示器 -->
-            <span
-              class="inline-flex items-center px-2 py-1 rounded-full text-xs font-medium"
-              :class="statusClass"
-            >
-              {{ statusText }}
-            </span>
-
-            <!-- 详情按钮 -->
-            <button
-              @click="showDetails = true"
-              class="text-blue-600 hover:text-blue-800 text-sm font-medium"
-            >
-              查看详情
-            </button>
-          </div>
+          <!-- 详情按钮 -->
+          <button
+            @click="showDetails = true"
+            class="text-blue-600 hover:text-blue-800 font-medium text-sm"
+          >
+            查看详情
+          </button>
         </div>
+      </div>
 
-        <!-- 实时指标 -->
-        <div class="grid grid-cols-3 md:grid-cols-5 gap-4 text-center mb-4 pointer-events-none">
-          <div class="bg-white/10 rounded-lg p-3">
-            <div class="text-2xl font-bold text-blue-600">{{ tokens }}</div>
-            <div class="text-sm text-gray-700">Token 数</div>
-          </div>
-          <div class="bg-white/10 rounded-lg p-3">
-            <div class="text-2xl font-bold text-green-600">{{ formatSpeed(averageSpeed) }}</div>
-            <div class="text-sm text-gray-700">平均速度</div>
-          </div>
-          <div class="bg-white/10 rounded-lg p-3">
-            <div class="text-2xl font-bold text-red-600">{{ formatSpeed(instantaneousSpeed) }}</div>
-            <div class="text-sm text-gray-700">瞬时速度</div>
-          </div>
-          <div class="bg-white/10 rounded-lg p-3">
-            <div class="text-2xl font-bold text-purple-600">{{ formatDuration(elapsedTime) }}</div>
-            <div class="text-sm text-gray-700">总耗时</div>
-          </div>
-          <div class="bg-white/10 rounded-lg p-3">
-            <div class="text-2xl font-bold text-orange-600">{{ formatDuration(firstTokenDelay) }}</div>
-            <div class="text-sm text-gray-700">首Token延迟</div>
-          </div>
+      <!-- 实时指标 -->
+      <div class="grid grid-cols-2 md:grid-cols-5 gap-6 mb-6">
+        <div class="text-center">
+          <div class="text-3xl font-bold text-gray-900 mb-1">{{ tokens }}</div>
+          <div class="text-sm text-gray-600">Token 数</div>
         </div>
+        <div class="text-center">
+          <div class="text-3xl font-bold text-green-600 mb-1">{{ formatSpeed(averageSpeed) }}</div>
+          <div class="text-sm text-gray-600">平均速度</div>
+        </div>
+        <div class="text-center">
+          <div class="text-3xl font-bold text-red-600 mb-1">{{ formatSpeed(instantaneousSpeed) }}</div>
+          <div class="text-sm text-gray-600">瞬时速度</div>
+        </div>
+        <div class="text-center">
+          <div class="text-3xl font-bold text-purple-600 mb-1">{{ formatDuration(elapsedTime) }}</div>
+          <div class="text-sm text-gray-600">总耗时</div>
+        </div>
+        <div class="text-center">
+          <div class="text-3xl font-bold text-orange-600 mb-1">{{ formatDuration(firstTokenDelay) }}</div>
+          <div class="text-sm text-gray-600">首Token延迟</div>
+        </div>
+      </div>
 
-        <!-- 配置信息 -->
-        <div class="mt-4 pt-4 border-t border-gray-200/30 pointer-events-none">
-          <h3 class="text-sm font-medium text-gray-700 mb-2">测试配置</h3>
-          <div class="grid grid-cols-3 gap-4 text-xs text-gray-700">
-            <div class="bg-white/10 rounded px-3 py-2">温度: {{ state.config.temperature }}</div>
-            <div class="bg-white/10 rounded px-3 py-2">最大Token: {{ state.config.maxTokens }}</div>
-            <div class="bg-white/10 rounded px-3 py-2">历史间隔: {{ state.config.historyInterval }}ms</div>
-          </div>
-        </div>
+      <!-- 配置信息 -->
+      <div class="flex items-center space-x-6 text-sm text-gray-600">
+        <span>温度: {{ state.config.temperature }}</span>
+        <span>最大Token: {{ state.config.maxTokens }}</span>
+        <span>历史间隔: {{ state.config.historyInterval }}ms</span>
       </div>
     </div>
 
@@ -209,4 +206,5 @@
         </div>
       </div>
     </div>
+  </div>
 </template>
