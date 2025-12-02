@@ -331,7 +331,7 @@ export function useMultiRoundTest() {
    */
   const resumeMultiRoundTest = () => {
     if (state.status.isPaused && state.config) {
-      state.status.isPaused = true;
+      state.status.isPaused = false;
 
       // 从当前轮次重新开始
       scheduleNextRound(state.completedRounds);

@@ -150,7 +150,7 @@
       legend: {
         show: true,
         top: 'top',
-        left: 'right',
+        left: 'center',
         textStyle: {
           fontSize: 12,
           color: '#666',
